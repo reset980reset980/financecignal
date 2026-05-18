@@ -56,8 +56,16 @@ const STOCK_ALIASES = [
   { code: "601006", ticker: "601006", name: "다친철도", market: "SH", keywords: ["大秦", "다친"] },
   { code: "601333", ticker: "601333", name: "광선철도", market: "SH", keywords: ["广深", "광선"] },
   { code: "002342", ticker: "002342", name: "줄리삭구", market: "SZ", keywords: ["巨力", "줄리"] },
-  { code: "AAPL", ticker: "AAPL", name: "애플", market: "US", keywords: ["apple", "애플"] },
-  { code: "TSLA", ticker: "TSLA", name: "테슬라", market: "US", keywords: ["tesla", "테슬라"] }
+  { code: "AAPL", ticker: "AAPL", name: "애플", market: "US", keywords: ["apple", "iphone", "애플", "아이폰"] },
+  { code: "TSLA", ticker: "TSLA", name: "테슬라", market: "US", keywords: ["tesla", "테슬라", "전기차"] },
+  { code: "NVDA", ticker: "NVDA", name: "엔비디아", market: "US", keywords: ["nvidia", "엔비디아", "gpu", "ai 반도체"] },
+  { code: "MSFT", ticker: "MSFT", name: "마이크로소프트", market: "US", keywords: ["microsoft", "ms", "마소", "마이크로소프트"] },
+  { code: "GOOGL", ticker: "GOOGL", name: "알파벳", market: "US", keywords: ["google", "alphabet", "구글", "알파벳"] },
+  { code: "AMZN", ticker: "AMZN", name: "아마존", market: "US", keywords: ["amazon", "aws", "아마존"] },
+  { code: "META", ticker: "META", name: "메타", market: "US", keywords: ["meta", "facebook", "instagram", "메타", "페이스북", "인스타그램"] },
+  { code: "AMD", ticker: "AMD", name: "AMD", market: "US", keywords: ["amd", "에이엠디", "반도체"] },
+  { code: "AVGO", ticker: "AVGO", name: "브로드컴", market: "US", keywords: ["broadcom", "브로드컴", "반도체"] },
+  { code: "TSM", ticker: "TSM", name: "TSMC", market: "US", keywords: ["tsmc", "티에스엠씨", "대만반도체", "파운드리"] }
 ];
 
 function findStockByQuery(query, options = {}) {
@@ -945,7 +953,7 @@ async function searchStocks(q, options = {}) {
   const limit = options.limit || 20;
   const query = normalizeStockQuery(q);
   const local = STOCK_ALIASES
-    .filter((stock) => stock.market === "KR")
+    .filter((stock) => query ? true : stock.market === "KR")
     .filter((stock) => {
       if (!query) return true;
       const corpus = [stock.code, stock.ticker, stock.name, stock.market, ...stock.keywords]

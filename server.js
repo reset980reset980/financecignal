@@ -52,39 +52,6 @@ const STOCK_ALIASES = [
   { code: "TSLA", ticker: "TSLA", name: "테슬라", market: "US", keywords: ["tesla", "테슬라"] }
 ];
 
-const WORKFLOW_STEPS = [
-  {
-    id: "intent",
-    label: "의도 파악",
-    detail: "한국 금융시장 중심의 신호 분석 요청으로 분류",
-    progress: 100
-  },
-  {
-    id: "news",
-    label: "한국어 뉴스 수집",
-    detail: "구글 뉴스 한국 RSS와 국내 뉴스 검색 링크를 우선 사용",
-    progress: 100
-  },
-  {
-    id: "score",
-    label: "ISQ 신호 점수화",
-    detail: "감성, 신뢰도, 강도, 예상 괴리, 시의성 5축 산출",
-    progress: 100
-  },
-  {
-    id: "forecast",
-    label: "원화 차트·예측",
-    detail: "국내 종목 가격을 원화 기준으로 표시하고 단기 예측선을 생성",
-    progress: 100
-  },
-  {
-    id: "report",
-    label: "리포트 준비",
-    detail: "요약, 추론 근거, 전달 체인, 출처를 한글 리포트 구조로 정리",
-    progress: 100
-  }
-];
-
 function findStockByQuery(query) {
   const text = String(query || "").toLowerCase();
   return STOCK_ALIASES.find((stock) =>
@@ -155,7 +122,7 @@ async function routeApi(req, res, url) {
   }
   if (req.method === "GET" && url.pathname === "/api/search") {
     const q = url.searchParams.get("q") || "";
-    sendJson(res, 200, makeKoreanSearch(q));
+    sendJson(res, 200, await makeKoreanSearchWithArticles(q));
     return;
   }
   if (req.method === "GET" && url.pathname === "/api/stock/search") {
@@ -252,82 +219,191 @@ async function getHotNews(source, count) {
 }
 
 async function getKoreaDashboard() {
-  const watchlist = STOCK_ALIASES.filter((stock) => stock.market === "KR").slice(0, 6);
-  const priceResults = await Promise.allSettled(watchlist.map((stock) => getPrice(stock.ticker, 45)));
   const charts = {};
-  const signals = [];
-  const news = await getKoreanNews("korean_market", 6);
-
-  priceResults.forEach((result, index) => {
-    const stock = watchlist[index];
-    if (result.status !== "fulfilled" || !result.value?.prices?.length) return;
-    const price = result.value;
-    const prices = price.prices.slice(-30).map((point) => ({
-      ...point,
-      close_krw: point.close_krw ?? (price.currency === "KRW" ? Math.round(Number(point.close)) : null)
-    }));
-    const closes = prices.map((point) => Number(point.close)).filter(Number.isFinite);
-    const first = closes[0];
-    const last = closes.at(-1);
-    const change = first && last ? ((last - first) / first) * 100 : 0;
-    const mood = change > 2 ? 0.35 : change < -2 ? -0.35 : 0;
-    const confidence = clamp(0.55 + Math.min(Math.abs(change) / 20, 0.3), 0.5, 0.85);
-    const source = news.items[index % Math.max(news.items.length, 1)];
-    const expectationGap = clamp(0.34 + Math.min(Math.abs(change) / 18, 0.36) + (source ? 0.08 : 0), 0.25, 0.9);
-
-    charts[stock.ticker] = {
-      ticker: stock.ticker,
-      name: stock.name,
-      currency: price.currency || "KRW",
-      display_currency: "KRW",
-      prices,
-      forecast: buildForecastFromPrices(prices, price.currency || "KRW"),
-      prediction: {
-        target_low: Number(Math.min(change * 0.3, change * 0.8).toFixed(2)),
-        target_high: Number(Math.max(change * 0.3, change * 0.8).toFixed(2))
-      },
-      prediction_logic: "최근 한국 주식 가격 흐름과 한국어 뉴스 흐름을 결합한 경량 모멘텀 예측입니다."
-    };
-
-    const topic = `${stock.name}${topicParticle(stock.name)}`;
-    signals.push({
-      signal_id: `kr_${stock.code}_${Date.now()}_${index}`,
-      title: `${stock.name}: 최근 1개월 ${change >= 0 ? "상승" : "하락"} 흐름과 한국 뉴스 점검`,
-      summary: `${topic} 최근 1개월 기준 ${change.toFixed(2)}% 변동했습니다. 한국어 뉴스와 가격 흐름을 함께 보며 단기 모멘텀을 확인합니다.`,
-      reasoning: `가격 데이터 ${prices.length}개와 한국어 금융 기사 흐름을 기준으로 산출했습니다. 급격한 변동은 실적, 업황, 금리, 환율 뉴스와 함께 재확인이 필요합니다.`,
-      sentiment_score: Number(mood.toFixed(2)),
-      confidence: Number(confidence.toFixed(2)),
-      intensity: Math.max(1, Math.min(5, Math.round(Math.abs(change) / 3) + 1)),
-      expectation_gap: Number(expectationGap.toFixed(2)),
-      timeliness: 0.85,
-      expected_horizon: "T+5",
-      price_in_status: "한국 시장 가격 기준",
-      industry_tags: stockTags(stock),
-      impact_tickers: [{ ticker: stock.ticker, code: stock.code, name: stock.name, weight: 1 }],
-      transmission_chain: [
-        { node_name: "한국어 뉴스", impact_type: mood >= 0 ? "호재" : "악재", logic: source?.title || "한국 금융시장 주요 뉴스 흐름을 확인합니다." },
-        { node_name: "가격 모멘텀", impact_type: mood >= 0 ? "중립·강세" : "중립·약세", logic: `최근 1개월 변동률 ${change.toFixed(2)}%` },
-        { node_name: "관심 종목", impact_type: "중립", logic: `${stock.name}의 단기 리스크와 수급을 함께 관찰합니다.` }
-      ],
-      sources: source ? [{ source_name: source.source_name, title: source.title, url: source.url }] : [],
-      search_results: makeKoreanSearch(`${stock.name} ${stockNewsKeyword(stock)} 뉴스`).engines
-    });
-  });
+  const newsBatches = await Promise.allSettled([
+    getKoreanNews("korean_market", 18),
+    getKoreanNews("semiconductor", 12),
+    getKoreanNews("battery", 10),
+    getKoreanNews("ai_platform", 10),
+    getKoreanNews("fx_rate", 8)
+  ]);
+  const newsItems = dedupeNewsItems(newsBatches.flatMap((result) => result.status === "fulfilled" ? result.value.items || [] : []));
+  const stockNewsMap = mapNewsToStocks(newsItems, STOCK_ALIASES.filter((stock) => stock.market === "KR"));
+  const signalResults = await Promise.allSettled(
+    [...stockNewsMap.entries()].map(([stock, items]) => buildSignalFromRealData(stock, items, charts))
+  );
+  const signals = signalResults
+    .filter((result) => result.status === "fulfilled" && result.value)
+    .map((result) => result.value)
+    .sort((a, b) => (b.confidence * b.intensity) - (a.confidence * a.intensity));
 
   return {
     generated_at: new Date().toISOString(),
     count: signals.length,
     locale: "ko-KR",
     base_market: "KR",
-    workflow: WORKFLOW_STEPS,
+    workflow: buildWorkflow(newsItems, stockNewsMap, signals, charts),
     analyzed_sources: [
-      "Awesome Finance Skills: 뉴스·종목·감성·예측·신호추적·논리시각화·리포트 스킬",
-      "DeepEar: Intent → Trend → Fin/ISQ → Forecast/Kronos → Report 파이프라인",
-      "OpenCode 공유 데모: 스킬 실행 로그와 최종 분석 리포트 흐름"
+      `한국어 뉴스 ${newsItems.length}건`,
+      `뉴스에서 감지된 국내 종목 ${stockNewsMap.size}개`,
+      `실제 가격·예측 생성 종목 ${Object.keys(charts).length}개`
     ],
     signals,
     charts
   };
+}
+
+async function buildSignalFromRealData(stock, newsItems, charts) {
+  const forecast = await forecastTicker(stock.ticker, 5);
+  if (!forecast?.prices?.length || !forecast?.forecast?.length) return null;
+  const prices = forecast.prices.slice(-30).map((point) => ({
+    ...point,
+    close_krw: point.close_krw ?? (forecast.currency === "KRW" ? Math.round(Number(point.close)) : null)
+  }));
+  const priceChange = priceChangePercent(prices);
+  const forecastChange = forecast.forecast_change_percent ?? priceChangePercent([prices.at(-1), forecast.forecast.at(-1)]);
+  const articleText = newsItems.map((item) => `${item.title || ""} ${item.description || ""}`).join("\n");
+  const articleSentiment = analyzeSentiment(articleText);
+  const forecastDirection = clamp(forecastChange / 8, -1, 1);
+  const sentiment = clamp((articleSentiment.score * 0.45) + (forecastDirection * 0.55), -1, 1);
+  const directionLabel = forecastChange > 0.35 ? "상승" : forecastChange < -0.35 ? "하락" : "횡보";
+  const confidence = clamp((forecast.confidence / 100) * 0.7 + Math.min(newsItems.length / 8, 1) * 0.2 + Math.min(Math.abs(forecastChange) / 10, 0.1), 0.2, 0.92);
+  const intensity = Math.max(1, Math.min(5, Math.ceil(Math.abs(forecastChange) / 1.8) + Math.min(newsItems.length, 2)));
+  const expectationGap = clamp(Math.abs(forecastChange - priceChange) / 10, 0.05, 0.95);
+  const timeliness = latestNewsTimeliness(newsItems);
+  const mainSource = newsItems[0];
+  const impactType = sentiment > 0.08 ? "호재" : sentiment < -0.08 ? "악재" : "중립";
+  const prediction = {
+    target_low: forecast.prediction?.target_low ?? Number(Math.min(0, forecastChange).toFixed(2)),
+    target_high: forecast.prediction?.target_high ?? Number(Math.max(0, forecastChange).toFixed(2))
+  };
+
+  charts[stock.ticker] = {
+    ticker: forecast.ticker,
+    name: forecast.name,
+    currency: forecast.currency || "KRW",
+    display_currency: "KRW",
+    prices,
+    forecast: forecast.forecast,
+    prediction,
+    prediction_confidence: forecast.confidence,
+    prediction_change_percent: Number(forecastChange.toFixed(2)),
+    prediction_direction: directionLabel,
+    prediction_logic: forecast.method
+  };
+
+  return {
+    signal_id: `kr_${stock.code}_${stableSignalId(mainSource?.url || mainSource?.title || stock.ticker)}`,
+    title: `${stock.name}: 실제 뉴스 ${newsItems.length}건과 ${forecast.expected_horizon || "T+5"} 예측 ${directionLabel}`,
+    summary: `${stock.name} 관련 한국어 뉴스 ${newsItems.length}건과 실제 가격 데이터를 결합했습니다. 최근 1개월 변화율은 ${priceChange.toFixed(2)}%, 예측 변화율은 ${forecastChange.toFixed(2)}%입니다.`,
+    reasoning: `주요 기사: ${mainSource?.title || "기사 제목 없음"} / 예측 방식: ${forecast.method} / 예측 신뢰도: ${forecast.confidence}% / 기사 감성 점수: ${articleSentiment.score}`,
+    sentiment_score: Number(sentiment.toFixed(2)),
+    confidence: Number(confidence.toFixed(2)),
+    intensity,
+    expectation_gap: Number(expectationGap.toFixed(2)),
+    timeliness: Number(timeliness.toFixed(2)),
+    expected_horizon: forecast.expected_horizon || "T+5",
+    price_in_status: "실제 가격·실제 뉴스 기반",
+    prediction_summary: {
+      direction: directionLabel,
+      change_percent: Number(forecastChange.toFixed(2)),
+      confidence: forecast.confidence,
+      target_low: prediction.target_low,
+      target_high: prediction.target_high
+    },
+    industry_tags: stockTags(stock),
+    impact_tickers: [{ ticker: stock.ticker, code: stock.code, name: stock.name, weight: 1 }],
+    transmission_chain: [
+      { node_name: "한국어 기사", impact_type: impactType, logic: mainSource?.title || "실제 기사 없음" },
+      { node_name: "기사 감성", impact_type: articleSentiment.label_ko, logic: articleSentiment.reason },
+      { node_name: "가격·예측", impact_type: directionLabel === "상승" ? "중립·강세" : directionLabel === "하락" ? "중립·약세" : "중립", logic: `1개월 ${priceChange.toFixed(2)}%, 예측 ${forecastChange.toFixed(2)}%` },
+      { node_name: "영향 종목", impact_type: impactType, logic: `${stock.name} (${stock.ticker})` }
+    ],
+    sources: newsItems.slice(0, 3).map((item) => ({ source_name: item.source_name, title: item.title, url: item.url, published_at: item.published_at })),
+    search_results: makeKoreanSearch(`${stock.name} ${stockNewsKeyword(stock)} 뉴스`).engines
+  };
+}
+
+function dedupeNewsItems(items) {
+  const seen = new Set();
+  return items.filter((item) => {
+    const key = item.url || item.title;
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function mapNewsToStocks(items, stocks) {
+  const map = new Map();
+  for (const item of items) {
+    const text = `${item.title || ""} ${item.description || ""}`.toLowerCase();
+    for (const stock of stocks) {
+      const terms = [stock.name, stock.code, stock.ticker, ...stock.keywords].map((term) => String(term).toLowerCase());
+      if (!terms.some((term) => text.includes(term))) continue;
+      if (!map.has(stock)) map.set(stock, []);
+      map.get(stock).push(item);
+    }
+  }
+  return new Map([...map.entries()].filter(([, matchedItems]) => matchedItems.length > 0));
+}
+
+function buildWorkflow(newsItems, stockNewsMap, signals, charts) {
+  return [
+    {
+      id: "news",
+      label: "한국어 뉴스 수집",
+      detail: `RSS에서 실제 기사 ${newsItems.length}건 수집`,
+      progress: newsItems.length ? 100 : 0
+    },
+    {
+      id: "detect",
+      label: "종목 감지",
+      detail: `기사에서 국내 종목 ${stockNewsMap.size}개 감지`,
+      progress: stockNewsMap.size ? 100 : 0
+    },
+    {
+      id: "forecast",
+      label: "가격·예측 계산",
+      detail: `실제 가격 기반 예측 ${Object.keys(charts).length}개 생성`,
+      progress: Object.keys(charts).length ? 100 : 0
+    },
+    {
+      id: "score",
+      label: "ISQ 신호 점수화",
+      detail: `뉴스 감성, 예측 방향, 신뢰도 결합 신호 ${signals.length}개`,
+      progress: signals.length ? 100 : 0
+    },
+    {
+      id: "visualize",
+      label: "시각화 연결",
+      detail: "신호 카드가 예측 변화율·예측 신뢰도·전달 체인을 직접 사용",
+      progress: signals.length && Object.keys(charts).length ? 100 : 0
+    }
+  ];
+}
+
+function stableSignalId(value) {
+  let hash = 0;
+  for (const char of String(value || "")) {
+    hash = ((hash << 5) - hash + char.charCodeAt(0)) | 0;
+  }
+  return Math.abs(hash).toString(36);
+}
+
+function priceChangePercent(points) {
+  const values = (points || []).map((point) => Number(point?.close)).filter(Number.isFinite);
+  const first = values[0];
+  const last = values.at(-1);
+  if (!first || !last) return 0;
+  return ((last - first) / first) * 100;
+}
+
+function latestNewsTimeliness(items) {
+  const latest = Math.max(...items.map((item) => new Date(item.published_at || 0).getTime()).filter(Number.isFinite));
+  if (!Number.isFinite(latest) || latest <= 0) return 0.5;
+  const ageHours = Math.max(0, (Date.now() - latest) / 3600000);
+  return clamp(1 - ageHours / (24 * 7), 0.2, 1);
 }
 
 function stockTags(stock) {
@@ -406,19 +482,7 @@ async function getKoreanNews(source, count) {
     }));
     return { source: "google-news-kr", source_name: "한국어 기사", query, count: items.length, items };
   } catch {
-    const search = makeKoreanSearch(query);
-    const items = search.engines.slice(0, count).map((engine, index) => ({
-      id: engine.url,
-      source: "korean-search",
-      source_name: engine.name,
-      rank: index + 1,
-      title: `${query} - ${engine.name}에서 최신 기사 보기`,
-      title_ko: `${query} - ${engine.name}에서 최신 기사 보기`,
-      url: engine.url,
-      published_at: new Date().toISOString(),
-      meta: { query, origin: NEWS_SOURCES[source] || source }
-    }));
-    return { source: "korean-search", source_name: "한국어 뉴스 검색", query, count: items.length, items };
+    return { source: "google-news-kr", source_name: "한국어 기사", query, count: 0, items: [] };
   }
 }
 
@@ -527,19 +591,23 @@ async function getPolymarketFinanceMarkets(query, limit) {
     const manifoldTerm = matchedStock
       ? (matchedStock.keywords.find((kw) => /^[a-z]/i.test(kw)) || matchedStock.name)
       : (strictTerms.length > 0 ? [...strictTerms].sort((a, b) => b.length - a.length)[0] : query);
-    const fallback = await getMetaculusFallback(manifoldTerm, null, limit);
+    const fallback = shouldUseManifoldFallback(strictTerms, matchedStock)
+      ? await getMetaculusFallback(manifoldTerm, strictTerms, limit)
+      : [];
     const fallbackReason = matchedStock
-      ? `폴리마켓에 ${matchedStock.name} 종목의 예측 시장이 없어 Manifold Markets 대체 데이터를 표시합니다`
-      : `폴리마켓에 관련 예측시장이 없어 Manifold Markets 대체 데이터를 표시합니다`;
+      ? `폴리마켓에 ${matchedStock.name} 종목의 직접 예측시장이 없어 예측시장 검색 링크를 제공합니다`
+      : fallback.length
+        ? `폴리마켓 직접 결과가 부족해 Manifold Markets의 관련 예측시장을 함께 표시합니다`
+        : `폴리마켓에 직접 매칭되는 금융 예측시장이 없어 예측시장 검색 링크를 제공합니다`;
     return {
       query,
       normalized_query: normalizedQuery,
       strict_terms: strictTerms,
-      source: "manifold-fallback",
+      source: fallback.length ? "manifold-fallback" : "prediction-search-links",
       fallback: true,
       fallback_reason: fallbackReason,
-      count: fallback.length,
-      markets: fallback
+      count: fallback.length || Math.min(limit, predictionSearchLinks(query, matchedStock).length),
+      markets: fallback.length ? fallback : predictionSearchLinks(query, matchedStock).slice(0, limit)
     };
   }
 
@@ -554,11 +622,92 @@ async function getPolymarketFinanceMarkets(query, limit) {
   };
 }
 
-async function getMetaculusFallback(searchTerm, _unused, limit) {
+function shouldUseManifoldFallback(strictTerms, matchedStock) {
+  if (matchedStock) return false;
+  const usefulTerms = new Set(["bitcoin", "btc", "ethereum", "eth", "ipo", "listing", "kraken", "microstrategy", "nasdaq"]);
+  return strictTerms.some((term) => usefulTerms.has(term));
+}
+
+function predictionSearchLinks(query, matchedStock) {
+  const search = matchedStock
+    ? `${matchedStock.name} ${matchedStock.keywords.find((kw) => /^[a-z]/i.test(kw)) || matchedStock.ticker} stock forecast`
+    : normalizePolymarketQuery(query);
+  const encoded = encodeURIComponent(search);
+  return [
+    {
+      id: "polymarket-search",
+      question: `Polymarket에서 "${search}" 검색`,
+      question_ko: `폴리마켓에서 "${search}" 검색`,
+      event_title: "Polymarket",
+      event_title_ko: "폴리마켓",
+      tags: ["search", "prediction-market"],
+      tags_ko: ["예측시장", "직접검색"],
+      outcomes: ["Open"],
+      outcomes_ko: ["열기"],
+      outcomePrices: null,
+      volume: 0,
+      liquidity: 0,
+      url: `https://polymarket.com/search?query=${encoded}`,
+      source: "search-link"
+    },
+    {
+      id: "manifold-search",
+      question: `Manifold Markets에서 "${search}" 검색`,
+      question_ko: `매니폴드 마켓에서 "${search}" 검색`,
+      event_title: "Manifold Markets",
+      event_title_ko: "매니폴드 마켓",
+      tags: ["search", "prediction-market"],
+      tags_ko: ["예측시장", "직접검색"],
+      outcomes: ["Open"],
+      outcomes_ko: ["열기"],
+      outcomePrices: null,
+      volume: 0,
+      liquidity: 0,
+      url: `https://manifold.markets/search?term=${encoded}`,
+      source: "search-link"
+    },
+    {
+      id: "metaculus-search",
+      question: `Metaculus에서 "${search}" 검색`,
+      question_ko: `메타큘러스에서 "${search}" 검색`,
+      event_title: "Metaculus",
+      event_title_ko: "메타큘러스",
+      tags: ["search", "forecasting"],
+      tags_ko: ["예측", "직접검색"],
+      outcomes: ["Open"],
+      outcomes_ko: ["열기"],
+      outcomePrices: null,
+      volume: 0,
+      liquidity: 0,
+      url: `https://www.metaculus.com/questions/?search=${encoded}`,
+      source: "search-link"
+    },
+    {
+      id: "kalshi-search",
+      question: `Kalshi에서 "${search}" 검색`,
+      question_ko: `칼시에서 "${search}" 검색`,
+      event_title: "Kalshi",
+      event_title_ko: "칼시",
+      tags: ["search", "prediction-market"],
+      tags_ko: ["예측시장", "직접검색"],
+      outcomes: ["Open"],
+      outcomes_ko: ["열기"],
+      outcomePrices: null,
+      volume: 0,
+      liquidity: 0,
+      url: `https://kalshi.com/markets?search=${encoded}`,
+      source: "search-link"
+    }
+  ];
+}
+
+async function getMetaculusFallback(searchTerm, strictTerms, limit) {
   try {
     const url = `https://api.manifold.markets/v0/search-markets?term=${encodeURIComponent(searchTerm)}&limit=${limit}`;
     const raw = await fetchJson(url);
-    const items = (Array.isArray(raw) ? raw : []).slice(0, limit);
+    const items = (Array.isArray(raw) ? raw : [])
+      .filter((item) => scoreFallbackPrediction(item, strictTerms) > 0)
+      .slice(0, limit);
     return await Promise.all(items.map(async (item) => ({
       id: `manifold-${item.id}`,
       question: item.question,
@@ -578,6 +727,19 @@ async function getMetaculusFallback(searchTerm, _unused, limit) {
   } catch {
     return [];
   }
+}
+
+function scoreFallbackPrediction(item, strictTerms) {
+  const haystack = [
+    item.question,
+    item.description,
+    item.textDescription,
+    item.url,
+    ...(item.tags || [])
+  ].join(" ").toLowerCase();
+  if (/milky way|galaxy|album|gta|nba|nhl|movie|music|celebrity|sport|football|baseball/.test(haystack)) return 0;
+  if (strictTerms?.length && !strictTerms.some((term) => hasSearchTerm(haystack, term))) return 0;
+  return Number(item.volume || 0) > 0 ? 1 : 0;
 }
 
 function normalizePolymarketQuery(query) {
@@ -671,6 +833,30 @@ function makeKoreanSearch(q) {
   };
 }
 
+async function makeKoreanSearchWithArticles(q) {
+  const base = makeKoreanSearch(q);
+  const articles = await getKoreanArticlesForQuery(base.query, 8);
+  return { ...base, articles };
+}
+
+async function getKoreanArticlesForQuery(query, count) {
+  try {
+    const rss = await fetchText(`https://news.google.com/rss/search?q=${encodeURIComponent(query)}&hl=ko&gl=KR&ceid=KR:ko`);
+    return parseGoogleNewsRss(rss).slice(0, count).map((item, index) => ({
+      id: item.link || `article_${index}`,
+      source: "google-news-kr",
+      source_name: "구글 뉴스 한국",
+      rank: index + 1,
+      title: item.title,
+      url: item.link,
+      published_at: item.pubDate,
+      snippet: item.description || ""
+    }));
+  } catch {
+    return [];
+  }
+}
+
 function searchStocks(q) {
   const query = q.toLowerCase().trim();
   if (!query) return STOCK_ALIASES.filter((stock) => stock.market === "KR");
@@ -688,6 +874,9 @@ async function getPrice(ticker, days = 60) {
   if (!known) {
     const byName = findStockByQuery(ticker);
     if (byName) { known = byName; ticker = byName.ticker; }
+  }
+  if (known && (known.market === "KR" || known.market === "US")) {
+    ticker = known.ticker;
   }
   if (!known && /[가-힯一-鿿]/.test(String(ticker))) {
     const names = STOCK_ALIASES.map((s) => s.name).join(", ");
@@ -786,15 +975,35 @@ async function getFundamentals(ticker) {
 }
 
 function analyzeSentiment(text) {
-  const positive = ["상승", "호재", "증가", "돌파", "개선", "매수", "성장", "수혜", "강세", "positive", "profit", "beat", "突破", "增长", "利好"];
-  const negative = ["하락", "악재", "감소", "조사", "위험", "손실", "매도", "약세", "상장폐지", "negative", "loss", "risk", "调查", "退市", "利空"];
+  const positive = ["상승", "호재", "증가", "돌파", "개선", "매수", "성장", "수혜", "강세", "반등", "호황", "흑자", "최대", "확대", "수주", "개발", "회복", "상향", "급등", "실적 개선", "positive", "profit", "beat", "突破", "增长", "利好"];
+  const negative = ["하락", "악재", "감소", "조사", "위험", "손실", "매도", "약세", "상장폐지", "사망", "죽음", "위기", "적자", "부진", "급락", "폭락", "충격", "우려", "논란", "제재", "파업", "총파업", "추락", "악화", "둔화", "축소", "하향", "negative", "loss", "risk", "调查", "退市", "利空"];
   const haystack = String(text || "").toLowerCase();
-  const pos = positive.reduce((sum, word) => sum + (haystack.includes(word.toLowerCase()) ? 1 : 0), 0);
-  const neg = negative.reduce((sum, word) => sum + (haystack.includes(word.toLowerCase()) ? 1 : 0), 0);
+  const positiveHits = keywordMatches(haystack, positive);
+  const negativeHits = keywordMatches(haystack, negative);
+  const pos = positiveHits.reduce((sum, item) => sum + item.count, 0);
+  const neg = negativeHits.reduce((sum, item) => sum + item.count, 0);
   const score = clamp((pos - neg) / Math.max(pos + neg, 1), -1, 1);
   const label = score > 0.15 ? "positive" : score < -0.15 ? "negative" : "neutral";
   const labelKo = label === "positive" ? "긍정" : label === "negative" ? "부정" : "중립";
-  return { score: Number(score.toFixed(2)), label, label_ko: labelKo, reason: `긍정 키워드 ${pos}개, 부정 키워드 ${neg}개를 감지했습니다.` };
+  return {
+    score: Number(score.toFixed(2)),
+    score_percent: Math.round(score * 100),
+    label,
+    label_ko: labelKo,
+    positive_count: pos,
+    negative_count: neg,
+    matched_positive: positiveHits.map((item) => item.word),
+    matched_negative: negativeHits.map((item) => item.word),
+    analyzed_length: haystack.length,
+    reason: `분석 텍스트 ${haystack.length.toLocaleString("ko-KR")}자에서 긍정 키워드 ${pos}개, 부정 키워드 ${neg}개를 감지했습니다.`
+  };
+}
+
+function keywordMatches(haystack, words) {
+  return words.map((word) => {
+    const escaped = String(word).toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return { word, count: (haystack.match(new RegExp(escaped, "g")) || []).length };
+  }).filter((item) => item.count > 0);
 }
 
 async function forecastTicker(ticker, days = 5) {
@@ -803,6 +1012,7 @@ async function forecastTicker(ticker, days = 5) {
   const last = closes.at(-1);
   const prev = closes.at(-6) || closes[0] || last;
   const dailyMomentum = last && prev ? ((last - prev) / prev) / 5 : 0;
+  const forecastChange = dailyMomentum * days * 100;
   const forecast = Array.from({ length: days }, (_, index) => {
     const close = last * (1 + dailyMomentum * (index + 1));
     const date = new Date(Date.now() + (index + 1) * 86400000).toISOString().slice(0, 10);
@@ -815,8 +1025,16 @@ async function forecastTicker(ticker, days = 5) {
   return {
     ticker: price.ticker,
     name: price.name,
-    method: "크로노스 호환 경량 모멘텀 예측",
+    currency: price.currency || price.display_currency || "KRW",
+    display_currency: price.display_currency || price.currency || "KRW",
+    method: "실제 가격 기반 단기 모멘텀 예측",
     confidence: Math.round(clamp(0.55 + Math.abs(dailyMomentum) * 10, 0.45, 0.78) * 100),
+    expected_horizon: `T+${days}`,
+    forecast_change_percent: Number(forecastChange.toFixed(2)),
+    prediction: {
+      target_low: Number(Math.min(0, forecastChange * 0.75).toFixed(2)),
+      target_high: Number(Math.max(0, forecastChange * 1.25).toFixed(2))
+    },
     prices: price.prices,
     forecast
   };
@@ -825,20 +1043,47 @@ async function forecastTicker(ticker, days = 5) {
 async function trackSignal(body) {
   const signal = body.signal || {};
   const newInfo = body.newInfo || body.text || "";
-  const sentiment = analyzeSentiment(`${signal.summary || ""} ${newInfo}`);
-  const oldConfidence = Number(signal.confidence || 0.5);
-  const nextConfidence = clamp(oldConfidence + sentiment.score * 0.15, 0, 1);
-  const status = sentiment.score > 0.2 ? "강화" : sentiment.score < -0.2 ? "약화" : "유지";
+  const newSentiment = analyzeSentiment(newInfo);
+  const baseSentiment = Number.isFinite(Number(signal.sentiment_score)) ? clamp(Number(signal.sentiment_score), -1, 1) : 0;
+  const effectiveScore = newSentiment.positive_count + newSentiment.negative_count > 0 ? newSentiment.score : baseSentiment;
+  const directionDelta = effectiveScore - baseSentiment;
+  const directionAlignment = directionDelta > 0.12 ? "강화 방향" : directionDelta < -0.12 ? "약화 방향" : "방향 유지";
+  const impactMagnitude = clamp(Math.abs(directionDelta) + Math.min((newSentiment.positive_count + newSentiment.negative_count) / 12, 0.35), 0, 1);
+  const store = await readSignalStore();
+  const signalId = signal.signal_id || `manual_${stableSignalId(signal.title || newInfo)}`;
+  const previous = store.find((item) => item.id === signalId);
+  const oldConfidence = Number(previous?.nextConfidence ?? signal.confidence ?? 0.5);
+  const confidenceDelta = directionDelta * 0.18 + (directionAlignment === "방향 유지" ? 0 : Math.sign(directionDelta) * impactMagnitude * 0.07);
+  const nextConfidence = clamp(oldConfidence + confidenceDelta, 0, 1);
+  const status = confidenceDelta > 0.025 ? "강화" : confidenceDelta < -0.025 ? "약화" : "유지";
   const record = {
-    id: signal.signal_id || `manual_${Date.now()}`,
+    id: signalId,
     title: signal.title || "수동 신호",
     status,
     oldConfidence,
     nextConfidence: Number(nextConfidence.toFixed(2)),
-    sentiment,
+    confidenceDelta: Number(confidenceDelta.toFixed(3)),
+    directionDelta: Number(directionDelta.toFixed(2)),
+    directionAlignment,
+    baseSentiment: Number(baseSentiment.toFixed(2)),
+    newEvidenceScore: Number(effectiveScore.toFixed(2)),
+    impactMagnitude: Number(impactMagnitude.toFixed(2)),
+    evidence: {
+      analyzed_length: newSentiment.analyzed_length,
+      positive_count: newSentiment.positive_count,
+      negative_count: newSentiment.negative_count,
+      matched_positive: newSentiment.matched_positive,
+      matched_negative: newSentiment.matched_negative
+    },
+    rationale: [
+      `기존 신호 감성 ${baseSentiment.toFixed(2)} 대비 새 근거 점수 ${effectiveScore.toFixed(2)}입니다.`,
+      `방향 판정은 ${directionAlignment}이며 신뢰도 변화량은 ${(confidenceDelta * 100).toFixed(1)}%p입니다.`,
+      newSentiment.positive_count + newSentiment.negative_count > 0
+        ? `새 근거에서 긍정 ${newSentiment.positive_count}개, 부정 ${newSentiment.negative_count}개 키워드를 감지했습니다.`
+        : "새 근거에 직접 감성 키워드가 없어 기존 신호 방향을 유지 기준으로 사용했습니다."
+    ],
     updated_at: new Date().toISOString()
   };
-  const store = await readSignalStore();
   store.unshift(record);
   await writeFile(SIGNAL_STORE, JSON.stringify(store.slice(0, 200), null, 2));
   return record;

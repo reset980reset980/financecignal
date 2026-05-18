@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Finance Signal Radar</title>
-    <link rel="stylesheet" href="./styles.css?v=11" />
+    <link rel="stylesheet" href="./styles.css?v=12" />
   </head>
   <body>
     <header class="topbar">
@@ -92,7 +92,7 @@
           <article>
             <h3>예측시장</h3>
             <div class="inline-form">
-              <input id="polyQuery" placeholder="금리, 비트코인, IPO, 주식" />
+              <input id="polyQuery" placeholder="비워두면 선택 신호로 자동 검색" />
               <button type="button" data-tool="polymarket">금융 예측 조회</button>
             </div>
             <div id="polyOutput" class="tool-output"></div>
@@ -129,7 +129,7 @@
           </article>
           <article>
             <h3>신호 추적</h3>
-            <textarea id="trackText" rows="4" placeholder="새 뉴스/가격 정보를 입력"></textarea>
+            <textarea id="trackText" rows="4" placeholder="기존 선택 신호를 강화/약화할 새 기사, 가격, 공시 근거를 입력"></textarea>
             <button type="button" data-tool="track">강화·약화 판정</button>
             <div id="trackOutput" class="tool-output"></div>
           </article>
@@ -248,6 +248,6 @@
       </section>
     </main>
 
-    <script src="./app.js?v=11"></script>
+    <script src="./app.js?v=12"></script>
   </body>
 </html>

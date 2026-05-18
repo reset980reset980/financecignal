@@ -46,8 +46,17 @@ const state = {
   signals: [],
   selectedSignal: null,
   selectedTicker: null,
+  selectedArticle: null,
+  articleSelections: [],
   filter: "all",
   query: ""
+};
+
+const FILTER_LABELS = {
+  all: "전체",
+  positive: "긍정",
+  neutral: "중립",
+  negative: "부정"
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -239,6 +248,24 @@ function filteredSignals() {
   });
 }
 
+function queryMatchedSignals() {
+  const query = state.query.trim().toLowerCase();
+  return state.signals.filter((signal) => !query || textCorpus(signal).includes(query));
+}
+
+function syncSelectionWithVisibleSignals() {
+  const visible = filteredSignals();
+  if (!visible.length) {
+    state.selectedSignal = null;
+    state.selectedTicker = null;
+    return;
+  }
+  if (!visible.some((signal) => signal.signal_id === state.selectedSignal?.signal_id)) {
+    state.selectedSignal = visible[0];
+    state.selectedTicker = firstTicker(visible[0]);
+  }
+}
+
 async function loadData() {
   setSync("불러오는 중");
   try {
@@ -271,6 +298,7 @@ function firstTicker(signal) {
 
 function render() {
   renderSummary();
+  renderFilterCounts();
   renderProgressFlow();
   renderVisualFeed();
   renderSignalList();
@@ -325,6 +353,19 @@ function renderSignalList() {
   });
 }
 
+function renderFilterCounts() {
+  const queryMatched = queryMatchedSignals();
+  const counts = { all: queryMatched.length, positive: 0, neutral: 0, negative: 0 };
+  queryMatched.forEach((signal) => {
+    counts[moodOf(signal.sentiment_score).key] += 1;
+  });
+  document.querySelectorAll(".filters button").forEach((button) => {
+    const filter = button.dataset.filter || "all";
+    button.textContent = `${FILTER_LABELS[filter] || filter} ${counts[filter] ?? 0}`;
+    button.classList.toggle("empty-filter", filter !== "all" && (counts[filter] ?? 0) === 0);
+  });
+}
+
 function renderProgressFlow() {
   const container = $("#phaseFlow");
   if (!container) return;
@@ -368,6 +409,8 @@ function visualSignalCard(signal, index) {
   const tags = signal.industry_tags || [];
   const metrics = signalMetrics(signal);
   const sources = signal.sources || [];
+  const prediction = signal.prediction_summary || {};
+  const predictionMarket = signal.prediction_market_summary;
   return `
     <article class="visual-signal-card ${mood.className}" data-signal-id="${escapeAttr(signal.signal_id || String(index))}">
       <div class="visual-card-top">
@@ -375,6 +418,8 @@ function visualSignalCard(signal, index) {
           <div class="mini-row visual-meta">
             <span class="pill ${mood.className}">${mood.label}</span>
             <span class="pill">ISQ ${Math.round(metrics.quality * 100)}</span>
+            ${prediction.direction ? `<span class="pill">예측 ${escapeHtml(prediction.direction)} ${Number(prediction.change_percent || 0).toFixed(2)}%</span>` : ""}
+            ${predictionMarket ? `<span class="pill">예측시장 ${escapeHtml(predictionMarket.label || "")}</span>` : ""}
             <span class="pill">${escapeHtml(signal.expected_horizon || "T+N")}</span>
           </div>
           <h3>${escapeHtml(koText(signal.title || "금융 신호"))}</h3>
@@ -393,6 +438,8 @@ function visualSignalCard(signal, index) {
           ${metricBar("강도", metrics.intensity)}
           ${metricBar("괴리", metrics.expectationGap)}
           ${metricBar("시의성", metrics.timeliness)}
+          ${prediction.confidence ? `<div class="prediction-inline"><strong>예측 신뢰도 ${escapeHtml(String(prediction.confidence))}%</strong><span>범위 ${escapeHtml(String(prediction.target_low ?? "-"))}% ~ ${escapeHtml(String(prediction.target_high ?? "-"))}%</span></div>` : ""}
+          ${predictionMarket ? `<div class="prediction-inline market"><strong>예측시장 ${escapeHtml(predictionMarket.direct ? "직접 반영" : "검색 연결")}</strong><span>${escapeHtml(predictionMarket.probability ? `대표 확률 ${predictionMarket.probability}%` : predictionMarket.question || "검색 링크 제공")}</span></div>` : ""}
         </div>
         <div class="mini-chain-map">
           <div class="mini-chain-title">전달 그래프</div>
@@ -416,9 +463,11 @@ function signalMetrics(signal) {
   const sentiment = Math.abs(sentimentRaw);
   const confidence = Number(signal.confidence) || 0;
   const intensity = clamp((Number(signal.intensity) || 0) / 5, 0, 1);
-  const expectationGap = Number(signal.expectation_gap ?? signal.expectationGap ?? 0.5);
+  const marketLift = signal.prediction_market_summary?.direct ? 0.08 : 0;
+  const expectationGap = Number(signal.expectation_gap ?? signal.expectationGap ?? 0.5) + marketLift;
   const timeliness = Number(signal.timeliness) || 0;
-  const quality = (confidence * 0.35) + (intensity * 0.3) + (expectationGap * 0.2) + (timeliness * 0.15);
+  const marketQuality = signal.prediction_market_summary?.direct ? clamp(Number(signal.prediction_market_summary.probability || 50) / 100, 0, 1) : 0;
+  const quality = (confidence * 0.31) + (intensity * 0.27) + (expectationGap * 0.18) + (timeliness * 0.14) + (marketQuality * 0.1);
   return {
     sentiment: clamp(sentiment, 0, 1),
     confidence: clamp(confidence, 0, 1),
@@ -534,7 +583,23 @@ function truncateLabel(value, max) {
 function renderDetail() {
   const signal = state.selectedSignal;
   if (!signal) {
-    $("#detailTitle").textContent = "신호가 없습니다";
+    $("#detailSource").textContent = "필터 결과";
+    $("#detailTitle").textContent = "조건에 맞는 신호가 없습니다";
+    $("#detailMood").textContent = "-";
+    $("#detailMood").className = "mood neutral";
+    setMetric("sentiment", 0, "0.00");
+    setMetric("confidence", 0, "0%");
+    setMetric("intensity", 0, "0");
+    setMetric("timeliness", 0, "0%");
+    $("#summaryText").textContent = "검색어 또는 긍정·중립·부정 필터를 바꾸면 결과가 다시 표시됩니다.";
+    $("#reasoningText").textContent = "-";
+    $("#chainCount").textContent = "0단계";
+    $("#chainList").innerHTML = "";
+    $("#tickerHint").textContent = "없음";
+    $("#tickerList").innerHTML = `<div class="empty">영향 종목 정보가 없습니다.</div>`;
+    $("#sourceLinks").innerHTML = `<div class="empty">링크 없음</div>`;
+    $("#searchLinks").innerHTML = `<div class="empty">검색 결과 없음</div>`;
+    renderChart();
     return;
   }
 
@@ -743,8 +808,8 @@ function escapeJs(value) {
 $("#refreshBtn").addEventListener("click", loadData);
 $("#searchInput").addEventListener("input", (event) => {
   state.query = event.target.value;
-  renderVisualFeed();
-  renderSignalList();
+  syncSelectionWithVisibleSignals();
+  render();
 });
 
 $("#tickerList").addEventListener("click", (event) => {
@@ -774,8 +839,8 @@ document.querySelectorAll(".filters button").forEach((button) => {
     document.querySelectorAll(".filters button").forEach((item) => item.classList.remove("active"));
     button.classList.add("active");
     state.filter = button.dataset.filter;
-    renderVisualFeed();
-    renderSignalList();
+    syncSelectionWithVisibleSignals();
+    render();
   });
 });
 
@@ -806,6 +871,123 @@ function linkList(items) {
   return items.map((item) => `<div><a href="${escapeAttr(item.url || "#")}" target="_blank" rel="noopener noreferrer">${escapeHtml(item.title || item.name || item.question || item.url)}</a></div>`).join("");
 }
 
+function articleInputText(article) {
+  if (!article) return "";
+  return [
+    `[선택 기사] ${article.title || ""}`,
+    article.snippet || "",
+    article.url ? `원문: ${article.url}` : ""
+  ].filter(Boolean).join("\n");
+}
+
+function setHybridTextarea(selector, text) {
+  const element = document.querySelector(selector);
+  if (!element || !text) return;
+  const current = element.value.trim();
+  const marker = "\n\n[직접 입력]\n";
+  const direct = current.includes(marker)
+    ? current.slice(current.indexOf(marker) + marker.length).trim()
+    : (current.startsWith("[선택 기사]") ? "" : current);
+  if (!current) {
+    element.value = `${text}\n\n[직접 입력]\n`;
+    return;
+  }
+  element.value = `${text}\n\n[직접 입력]\n${direct}`;
+}
+
+function renderSearchResults(data) {
+  state.articleSelections = data.articles || [];
+  const engines = `
+    <div class="search-engine-links">
+      <strong>검색 엔진 링크</strong>
+      ${linkList(data.engines || [])}
+    </div>
+  `;
+  const articles = state.articleSelections.map((article, index) => `
+    <article class="article-result-card">
+      <div>
+        <strong>${escapeHtml(article.title || "기사 제목 없음")}</strong>
+        <span>${escapeHtml(article.source_name || "한국어 기사")} · ${escapeHtml(formatDate(article.published_at))}</span>
+      </div>
+      <p>${escapeHtml(article.snippet || "")}</p>
+      <div class="article-actions">
+        <a href="${escapeAttr(article.url || "#")}" target="_blank" rel="noopener noreferrer">원문 열기</a>
+        <button type="button" data-article-action="sentiment" data-article-index="${index}">감성 입력</button>
+        <button type="button" data-article-action="track" data-article-index="${index}">추적 입력</button>
+        <button type="button" data-article-action="sentiment-run" data-article-index="${index}">바로 감성분석</button>
+      </div>
+    </article>
+  `).join("");
+  return `
+    ${engines}
+    <div class="article-result-list">
+      <strong>분석할 기사 선택</strong>
+      ${articles || `<div class="empty">선택 가능한 기사 결과가 없습니다. 검색 엔진 링크에서 원문을 확인한 뒤 직접 입력할 수 있습니다.</div>`}
+    </div>
+  `;
+}
+
+function selectedPredictionQuery() {
+  const signal = state.selectedSignal;
+  if (!signal) return "금융 경제 주식 비트코인 금리";
+  const tickers = (signal.impact_tickers || []).map((ticker) => koText(ticker.name || ticker.ticker || ticker.code)).filter(Boolean);
+  const tags = signal.industry_tags || [];
+  return [koText(signal.title), ...tickers, ...tags, "예측시장"].filter(Boolean).join(" ");
+}
+
+function formatMarketPrice(market) {
+  if (!Array.isArray(market.outcomePrices) || !market.outcomePrices.length) return "";
+  const outcomes = Array.isArray(market.outcomes_ko) ? market.outcomes_ko : market.outcomes || [];
+  return market.outcomePrices.slice(0, 3).map((price, index) => {
+    const percent = Math.round(Number(price) * 100);
+    if (!Number.isFinite(percent)) return "";
+    return `${escapeHtml(outcomes[index] || `결과 ${index + 1}`)} ${percent}%`;
+  }).filter(Boolean).join(" · ");
+}
+
+function renderPredictionMarkets(data) {
+  const notice = data.fallback
+    ? `<div class="tool-notice">${escapeHtml(data.fallback_reason || "직접 예측시장 검색 링크를 표시합니다.")}</div>`
+    : `<div class="tool-notice good">폴리마켓 직접 매칭 ${data.count || 0}개</div>`;
+  const cards = (data.markets || []).map((market) => {
+    const price = formatMarketPrice(market);
+    const volume = Number(market.volume || 0);
+    const volumeText = volume > 0 ? `거래량 ${Math.round(volume).toLocaleString("ko-KR")}` : "검색 링크";
+    const source = market.event_title_ko || market.event_title || market.source || data.source || "예측시장";
+    return `
+      <a class="prediction-market-card" href="${escapeAttr(market.url || "#")}" target="_blank" rel="noopener noreferrer">
+        <strong>${escapeHtml(market.question_ko || market.question || "예측시장 검색")}</strong>
+        <span>${escapeHtml(source)} · ${escapeHtml(volumeText)}</span>
+        ${price ? `<small>${price}</small>` : ""}
+        <em>${(market.tags_ko || []).slice(0, 4).map((tag) => `<b>${escapeHtml(tag)}</b>`).join("")}</em>
+      </a>
+    `;
+  }).join("");
+  return `${notice}<div class="prediction-market-list">${cards || "조건에 맞는 예측시장을 찾지 못했습니다."}</div>`;
+}
+
+function summarizePredictionMarket(data) {
+  const markets = data.markets || [];
+  const first = markets[0] || {};
+  const prices = Array.isArray(first.outcomePrices) ? first.outcomePrices.map(Number).filter(Number.isFinite) : [];
+  const probability = prices.length ? Math.round(Math.max(...prices) * 100) : null;
+  return {
+    direct: !data.fallback,
+    source: data.source || "prediction-market",
+    count: data.count || markets.length,
+    question: first.question_ko || first.question || "",
+    probability,
+    label: data.fallback ? "검색 링크" : `직접 ${data.count || markets.length}개`
+  };
+}
+
+function applyPredictionMarketToSelectedSignal(data) {
+  if (!state.selectedSignal) return;
+  state.selectedSignal.prediction_market_summary = summarizePredictionMarket(data);
+  renderVisualFeed();
+  renderDetail();
+}
+
 async function checkApiHealth() {
   try {
     const health = await apiGet("/api/health");
@@ -825,18 +1007,15 @@ async function runTool(tool) {
     }
     if (tool === "polymarket") {
       setOutput("#polyOutput", "예측시장을 불러오는 중입니다.");
-      const q = document.querySelector("#polyQuery").value || "금융 경제 주식 비트코인 금리";
+      const q = document.querySelector("#polyQuery").value || selectedPredictionQuery();
       const data = await apiGet(`/api/polymarket/markets?limit=8&q=${encodeURIComponent(q)}`);
-      const notice = data.fallback
-        ? `<div style="background:#fff3cd;border:1px solid #ffc107;border-radius:4px;padding:8px 12px;margin-bottom:8px;color:#856404;font-size:13px;">⚠️ ${escapeHtml(data.fallback_reason || "폴리마켓 대체 데이터")}</div>`
-        : "";
-      const marketsList = data.markets.map((market) => `<div><a href="${escapeAttr(market.url)}" target="_blank">${escapeHtml(market.question_ko || market.question)}</a><br>${escapeHtml((market.tags_ko || []).join(" · "))}<br>거래량 ${Math.round(market.volume).toLocaleString("ko-KR")}</div>`).join("<hr>");
-      setOutput("#polyOutput", notice + (marketsList || "조건에 맞는 금융 예측시장을 찾지 못했습니다."));
+      setOutput("#polyOutput", renderPredictionMarkets(data));
+      applyPredictionMarketToSelectedSignal(data);
     }
     if (tool === "search") {
       const q = document.querySelector("#searchQuery").value || state.selectedSignal?.title || "금융 시장 뉴스";
       const data = await apiGet(`/api/search?q=${encodeURIComponent(q)}`);
-      setOutput("#searchOutput", linkList(data.engines));
+      setOutput("#searchOutput", renderSearchResults(data));
     }
     if (tool === "stock") {
       const q = document.querySelector("#stockQuery").value || "삼성전자";
@@ -849,19 +1028,38 @@ async function runTool(tool) {
       setOutput("#stockOutput", `<strong>${escapeHtml(fundamentals.name)} (${escapeHtml(ticker)})</strong><br>최근 종가: ${fundamentals.latest_close_krw ? formatWon(fundamentals.latest_close_krw) : fundamentals.latest_close}<br>1개월 변화율: ${fundamentals.one_month_change_percent}%<br>가격 데이터: ${price.prices.length}개`);
     }
     if (tool === "sentiment") {
-      const text = document.querySelector("#sentimentText").value || state.selectedSignal?.summary || "";
+      const text = document.querySelector("#sentimentText").value || articleInputText(state.selectedArticle) || state.selectedSignal?.summary || "";
       const data = await apiPost("/api/sentiment/analyze", { text });
-      setOutput("#sentimentOutput", `<strong>${escapeHtml(data.label_ko || koText(data.label))}</strong><br>점수 ${data.score}<br>${escapeHtml(data.reason)}`);
+      const matched = [
+        data.matched_positive?.length ? `긍정: ${data.matched_positive.join(", ")}` : "",
+        data.matched_negative?.length ? `부정: ${data.matched_negative.join(", ")}` : ""
+      ].filter(Boolean).map(escapeHtml).join("<br>");
+      setOutput("#sentimentOutput", `<strong>${escapeHtml(data.label_ko || koText(data.label))}</strong><br>감성 점수 ${data.score_percent ?? Math.round(Number(data.score || 0) * 100)} / 100<br>${escapeHtml(data.reason)}${matched ? `<br>${matched}` : ""}`);
     }
     if (tool === "predict") {
-      const ticker = document.querySelector("#predictTicker").value || state.selectedTicker || "005930.KS";
+      const rawTicker = document.querySelector("#predictTicker").value || state.selectedTicker || "005930.KS";
+      let ticker = rawTicker;
+      try {
+        const found = await apiGet(`/api/stock/search?q=${encodeURIComponent(rawTicker)}`);
+        ticker = found.results?.[0]?.ticker || rawTicker;
+      } catch {
+        ticker = rawTicker;
+      }
       const data = await apiGet(`/api/predict?ticker=${encodeURIComponent(ticker)}&days=5`);
       setOutput("#predictOutput", `<strong>${escapeHtml(data.name)} (${escapeHtml(data.ticker)})</strong><br>방식: ${escapeHtml(data.method)}<br>신뢰도: ${data.confidence}%<br>${data.forecast.map((point) => `${point.date}: ${point.close_krw ? `₩${point.close_krw.toLocaleString("ko-KR")}` : point.close}`).join("<br>")}`);
     }
     if (tool === "track") {
-      const newInfo = document.querySelector("#trackText").value || "새 정보 없음";
+      const newInfo = document.querySelector("#trackText").value || articleInputText(state.selectedArticle) || "새 정보 없음";
       const data = await apiPost("/api/signal/track", { signal: state.selectedSignal, newInfo });
-      setOutput("#trackOutput", `<strong>${escapeHtml(data.status)}</strong><br>신뢰도 ${Math.round(data.oldConfidence * 100)}% → ${Math.round(data.nextConfidence * 100)}%<br>${escapeHtml(data.sentiment.reason)}`);
+      if (state.selectedSignal) state.selectedSignal.confidence = data.nextConfidence;
+      const matched = [
+        data.evidence?.matched_positive?.length ? `강화 근거 키워드: ${data.evidence.matched_positive.join(", ")}` : "",
+        data.evidence?.matched_negative?.length ? `약화 근거 키워드: ${data.evidence.matched_negative.join(", ")}` : ""
+      ].filter(Boolean).map(escapeHtml).join("<br>");
+      const rationale = (data.rationale || []).map((line) => `<div>${escapeHtml(line)}</div>`).join("");
+      setOutput("#trackOutput", `<strong>${escapeHtml(data.status)} · ${escapeHtml(data.directionAlignment || "방향 유지")}</strong><br>신뢰도 ${Math.round(data.oldConfidence * 100)}% → ${Math.round(data.nextConfidence * 100)}% (${Number(data.confidenceDelta || 0) >= 0 ? "+" : ""}${Math.round(Number(data.confidenceDelta || 0) * 100)}%p)<br>기존 방향 ${Math.round(Number(data.baseSentiment || 0) * 100)} / 새 근거 ${Math.round(Number(data.newEvidenceScore || 0) * 100)}<br>${rationale}${matched ? `<br>${matched}` : ""}`);
+      renderVisualFeed();
+      renderDetail();
     }
     if (tool === "visualize") {
       const data = await apiPost("/api/visualize/chain", { signal: state.selectedSignal || {} });
@@ -872,12 +1070,41 @@ async function runTool(tool) {
       setOutput("#reportOutput", escapeHtml(data.markdown));
     }
   } catch (error) {
-    setOutput(`#${tool}Output`, `오류: ${escapeHtml(error.message)}`);
+    const outputMap = {
+      polymarket: "#polyOutput",
+      news: "#newsOutput",
+      search: "#searchOutput",
+      stock: "#stockOutput",
+      sentiment: "#sentimentOutput",
+      predict: "#predictOutput",
+      track: "#trackOutput",
+      visualize: "#visualOutput",
+      report: "#reportOutput"
+    };
+    setOutput(outputMap[tool] || `#${tool}Output`, `오류: ${escapeHtml(error.message)}`);
   }
 }
 
 document.querySelectorAll("[data-tool]").forEach((button) => {
   button.addEventListener("click", () => runTool(button.dataset.tool));
+});
+
+$("#searchOutput")?.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-article-action]");
+  if (!button) return;
+  const article = state.articleSelections[Number(button.dataset.articleIndex)];
+  if (!article) return;
+  state.selectedArticle = article;
+  const text = articleInputText(article);
+  if (button.dataset.articleAction === "sentiment" || button.dataset.articleAction === "sentiment-run") {
+    setHybridTextarea("#sentimentText", text);
+    setOutput("#sentimentOutput", `<strong>기사 선택됨</strong><br>${escapeHtml(article.title || "")}<br>직접 문장을 더 입력한 뒤 감성 점수를 실행할 수 있습니다.`);
+  }
+  if (button.dataset.articleAction === "track") {
+    setHybridTextarea("#trackText", text);
+    setOutput("#trackOutput", `<strong>기사 선택됨</strong><br>${escapeHtml(article.title || "")}<br>직접 문장을 더 입력한 뒤 강화·약화 판정을 실행할 수 있습니다.`);
+  }
+  if (button.dataset.articleAction === "sentiment-run") runTool("sentiment");
 });
 
 [

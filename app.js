@@ -48,6 +48,7 @@ const state = {
   selectedTicker: null,
   selectedArticle: null,
   articleSelections: [],
+  articleExtractCache: new Map(),
   articleSearchCache: new Map(),
   articleSearchRequests: new Set(),
   chartRequests: new Set(),
@@ -1024,6 +1025,7 @@ $("#searchLinks")?.addEventListener("click", (event) => {
       const article = sources[Number(sourceIndex)];
       state.selectedArticle = article || null;
       text = articleInputText(article);
+      extractSelectedArticle(article);
     } catch {
       text = "";
     }
@@ -1169,11 +1171,58 @@ function linkList(items) {
 
 function articleInputText(article) {
   if (!article) return "";
+  if (article.extracted_summary) {
+    return [
+      `[선택 기사] ${article.title || ""}`,
+      `[본문 요약]`,
+      article.extracted_summary,
+      article.final_url ? `원문: ${article.final_url}` : (article.url ? `원문: ${article.url}` : ""),
+      article.extract_warning ? `[주의] ${article.extract_warning}` : ""
+    ].filter(Boolean).join("\n");
+  }
   return [
     `[선택 기사] ${article.title || ""}`,
-    article.snippet || "",
+    article.snippet || "[본문 추출 전] 뉴스 해석은 현재 제목 기준입니다. 잠시 후 본문 요약을 가져옵니다.",
     article.url ? `원문: ${article.url}` : ""
   ].filter(Boolean).join("\n");
+}
+
+async function extractSelectedArticle(article) {
+  if (!article?.url) return;
+  const cacheKey = article.url;
+  const cached = state.articleExtractCache.get(cacheKey);
+  if (cached) {
+    applyArticleExtraction(article, cached);
+    return;
+  }
+  setOutput("#sentimentOutput", "기사 본문 요약을 가져오는 중입니다. 실패하면 제목 기준으로 해석합니다.");
+  try {
+    const extracted = await apiPost("/api/article/extract", { url: article.url, title: article.title || "" });
+    state.articleExtractCache.set(cacheKey, extracted);
+    applyArticleExtraction(article, extracted);
+  } catch (error) {
+    const fallback = { ok: false, title: article.title || "", summary: article.title || "", final_url: article.url, fallback_reason: `본문 추출 실패: ${error.message}` };
+    state.articleExtractCache.set(cacheKey, fallback);
+    applyArticleExtraction(article, fallback);
+  }
+}
+
+function applyArticleExtraction(article, extracted) {
+  if (!article || state.selectedArticle?.url !== article.url) return;
+  state.selectedArticle = {
+    ...article,
+    title: extracted.title || article.title,
+    extracted_summary: extracted.summary || article.snippet || article.title,
+    final_url: extracted.final_url || article.url,
+    extract_warning: extracted.ok ? "" : (extracted.fallback_reason || "본문 추출 실패, 제목 기준으로 해석합니다")
+  };
+  setHybridTextarea("#sentimentText", articleInputText(state.selectedArticle));
+  setOutput(
+    "#sentimentOutput",
+    extracted.ok
+      ? "기사 본문 요약을 입력했습니다. 뉴스 해석 버튼을 누르면 본문 요약 기준으로 해석합니다."
+      : `본문을 충분히 가져오지 못했습니다. 제목 기준으로 해석합니다.<br><small>${escapeHtml(extracted.fallback_reason || "")}</small>`
+  );
 }
 
 function setHybridTextarea(selector, text) {

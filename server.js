@@ -147,6 +147,11 @@ async function routeApi(req, res, url) {
     sendJson(res, 200, await makeKoreanSearchWithArticles(q));
     return;
   }
+  if (req.method === "POST" && url.pathname === "/api/article/extract") {
+    const body = await readBody(req);
+    sendJson(res, 200, await extractArticleSummary(body.url || "", body.title || ""));
+    return;
+  }
   if (req.method === "GET" && url.pathname === "/api/stock/search") {
     const q = url.searchParams.get("q") || "";
     sendJson(res, 200, { query: q, results: await searchStocks(q) });
@@ -1009,6 +1014,184 @@ async function getKoreanArticlesForQuery(query, count) {
   }
 }
 
+async function extractArticleSummary(url, title = "") {
+  const sourceUrl = String(url || "").trim();
+  const fallbackTitle = String(title || "").trim();
+  if (!sourceUrl) {
+    return {
+      ok: false,
+      title: fallbackTitle,
+      summary: fallbackTitle,
+      source_url: "",
+      final_url: "",
+      fallback_reason: "기사 URL이 없습니다"
+    };
+  }
+
+  try {
+    const decodedUrl = await resolveArticleUrl(sourceUrl);
+    const html = await fetchText(decodedUrl, { "user-agent": "Mozilla/5.0 FinanceDashboard/1.0" });
+    const finalUrl = extractCanonicalUrl(html) || decodedUrl;
+    const pageTitle = cleanArticleText(extractTitle(html) || fallbackTitle);
+    const summary = summarizeArticleHtml(html);
+    if (summary.length >= 80) {
+      return {
+        ok: true,
+        title: pageTitle || fallbackTitle,
+        summary,
+        source_url: sourceUrl,
+        final_url: finalUrl,
+        fallback_reason: ""
+      };
+    }
+    return {
+      ok: false,
+      title: pageTitle || fallbackTitle,
+      summary: pageTitle || fallbackTitle,
+      source_url: sourceUrl,
+      final_url: finalUrl,
+      fallback_reason: "본문을 충분히 추출하지 못해 제목 기준으로 해석합니다"
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      title: fallbackTitle,
+      summary: fallbackTitle,
+      source_url: sourceUrl,
+      final_url: sourceUrl,
+      fallback_reason: `본문 추출 실패: ${error.message}`
+    };
+  }
+}
+
+async function resolveArticleUrl(sourceUrl) {
+  try {
+    const parsed = new URL(sourceUrl);
+    if (parsed.hostname !== "news.google.com" || !parsed.pathname.includes("/articles/")) return sourceUrl;
+    const id = parsed.pathname.split("/").filter(Boolean).at(-1);
+    if (!id) return sourceUrl;
+    const params = await getGoogleNewsDecodeParams(id);
+    if (!params.signature || !params.timestamp) return sourceUrl;
+    return await decodeGoogleNewsArticleUrl(id, params.timestamp, params.signature);
+  } catch {
+    return sourceUrl;
+  }
+}
+
+async function getGoogleNewsDecodeParams(id) {
+  const urls = [
+    `https://news.google.com/articles/${id}`,
+    `https://news.google.com/rss/articles/${id}`
+  ];
+  for (const url of urls) {
+    try {
+      const html = await fetchText(url, { "user-agent": "Mozilla/5.0 FinanceDashboard/1.0" });
+      const signature = html.match(/data-n-a-sg=["']([^"']+)["']/)?.[1] || "";
+      const timestamp = html.match(/data-n-a-ts=["']([^"']+)["']/)?.[1] || "";
+      if (signature && timestamp) return { signature, timestamp };
+    } catch {
+      // Try the next Google News URL shape.
+    }
+  }
+  return { signature: "", timestamp: "" };
+}
+
+async function decodeGoogleNewsArticleUrl(id, timestamp, signature) {
+  const payload = [
+    "Fbv4je",
+    `["garturlreq",[["X","X",["X","X"],null,null,1,1,"US:en",null,1,null,null,null,null,null,0,1],"X","X",1,[1,1,1],1,1,null,0,0,null,0],"${id}",${timestamp},"${signature}"]`
+  ];
+  const body = `f.req=${encodeURIComponent(JSON.stringify([[payload]]))}`;
+  const text = await fetchText("https://news.google.com/_/DotsSplashUi/data/batchexecute", {
+    "content-type": "application/x-www-form-urlencoded;charset=UTF-8",
+    "user-agent": "Mozilla/5.0 FinanceDashboard/1.0",
+    "referer": "https://news.google.com/"
+  }, {
+    method: "POST",
+    body
+  });
+  const jsonText = text.split("\n\n")[1] || "[]";
+  const parsed = JSON.parse(jsonText);
+  const payloadText = parsed?.[0]?.[2] || "";
+  const decoded = JSON.parse(payloadText);
+  return decoded?.[1] || `https://news.google.com/rss/articles/${id}`;
+}
+
+function extractCanonicalUrl(html) {
+  const candidates = [
+    /<link[^>]+rel=["']canonical["'][^>]+href=["']([^"']+)["']/i,
+    /<meta[^>]+property=["']og:url["'][^>]+content=["']([^"']+)["']/i
+  ];
+  for (const pattern of candidates) {
+    const match = String(html || "").match(pattern);
+    if (match?.[1]) return decodeHtml(match[1]);
+  }
+  return "";
+}
+
+function extractTitle(html) {
+  const og = String(html || "").match(/<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)["']/i);
+  if (og?.[1]) return decodeHtml(og[1]);
+  const title = String(html || "").match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+  return title?.[1] ? decodeHtml(title[1]) : "";
+}
+
+function summarizeArticleHtml(html) {
+  const mainHtml = extractArticleMainHtml(html);
+  const metaDescription = extractMetaDescription(html);
+  const text = cleanArticleText(stripHtml(mainHtml || metaDescription || html));
+  const sentences = text
+    .split(/(?<=[.!?。！？]|다\.|요\.|음\.)\s+/)
+    .map((sentence) => sentence.trim())
+    .filter((sentence) => sentence.length >= 20 && sentence.length <= 420)
+    .filter((sentence) => !/cookie|javascript|구독|로그인|광고|저작권|copyright|무단 전재|전체기사|본문 바로가기/i.test(sentence));
+  return sentences.slice(0, 5).join(" ").slice(0, 1500);
+}
+
+function extractArticleMainHtml(html) {
+  const source = String(html || "");
+  const patterns = [
+    /<[^>]+id=["']realArtcContents["'][^>]*>([\s\S]*?)(?:<div[^>]+id=["']?|<!--\s*google_ad_section_end|<\/article>|<\/section>)/i,
+    /<article[^>]*>([\s\S]*?)<\/article>/i,
+    /<div[^>]+class=["'][^"']*(?:article|news|content|view)[^"']*["'][^>]*>([\s\S]*?)<\/div>/i
+  ];
+  for (const pattern of patterns) {
+    const match = source.match(pattern);
+    if (match?.[1] && cleanArticleText(stripHtml(match[1])).length > 80) return match[1];
+  }
+  return "";
+}
+
+function extractMetaDescription(html) {
+  const source = String(html || "");
+  const patterns = [
+    /<meta[^>]+property=["']og:description["'][^>]+content=["']([^"']+)["']/i,
+    /<meta[^>]+name=["']description["'][^>]+content=["']([^"']+)["']/i
+  ];
+  for (const pattern of patterns) {
+    const match = source.match(pattern);
+    if (match?.[1]) return decodeHtml(match[1]);
+  }
+  return "";
+}
+
+function stripHtml(value) {
+  return String(value || "")
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<noscript[\s\S]*?<\/noscript>/gi, " ")
+    .replace(/<br\s*\/?>/gi, " ")
+    .replace(/<\/p>/gi, ". ")
+    .replace(/<[^>]+>/g, " ");
+}
+
+function cleanArticleText(value) {
+  return decodeHtml(String(value || ""))
+    .replace(/\s+/g, " ")
+    .replace(/&nbsp;/g, " ")
+    .trim();
+}
+
 function normalizeStockQuery(value) {
   return String(value || "")
     .replace(/^(kr:|ko:|한국:|국내:|cn:|us:|global:)/i, "")
@@ -1576,10 +1759,34 @@ async function fetchJson(url, headers = {}) {
   return response.json();
 }
 
-async function fetchText(url, headers = {}) {
-  const response = await fetch(url, { headers: { "user-agent": "FinanceDashboard/1.0", ...headers }, signal: AbortSignal.timeout(8000) });
+async function fetchText(url, headers = {}, options = {}) {
+  const response = await fetch(url, {
+    ...options,
+    headers: { "user-agent": "FinanceDashboard/1.0", ...headers, ...(options.headers || {}) },
+    signal: options.signal || AbortSignal.timeout(8000)
+  });
   if (!response.ok) throw new Error(`${url} ${response.status}`);
-  return response.text();
+  return decodeResponseText(response, await response.arrayBuffer());
+}
+
+function decodeResponseText(response, buffer) {
+  const bytes = Buffer.from(buffer);
+  const contentType = response.headers.get("content-type") || "";
+  const head = bytes.subarray(0, Math.min(bytes.length, 4096)).toString("latin1");
+  const charset = (
+    contentType.match(/charset=([^;\s]+)/i)?.[1] ||
+    head.match(/<meta[^>]+charset=["']?\s*([^"'\s/>]+)/i)?.[1] ||
+    head.match(/<meta[^>]+content=["'][^"']*charset=([^"'\s;]+)/i)?.[1] ||
+    "utf-8"
+  ).toLowerCase();
+  const normalized = charset.includes("euc-kr") || charset.includes("ks_c_5601") || charset.includes("cp949")
+    ? "euc-kr"
+    : charset;
+  try {
+    return new TextDecoder(normalized).decode(bytes);
+  } catch {
+    return new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+  }
 }
 
 function parseGoogleNewsRss(xml) {

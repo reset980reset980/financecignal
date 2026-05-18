@@ -1137,11 +1137,12 @@ function extractTitle(html) {
 }
 
 function summarizeArticleHtml(html) {
+  const structuredBody = extractStructuredArticleBody(html);
   const mainHtml = extractArticleMainHtml(html);
   const metaDescription = extractMetaDescription(html);
-  const text = cleanArticleText(stripHtml(mainHtml || metaDescription || html));
+  const text = cleanArticleText(structuredBody || stripHtml(mainHtml || metaDescription || html));
   const sentences = text
-    .split(/(?<=[.!?。！？]|다\.|요\.|음\.)\s+/)
+    .split(/(?<=[.!?。！？])\s+/)
     .map((sentence) => sentence.trim())
     .filter((sentence) => sentence.length >= 20 && sentence.length <= 420)
     .filter((sentence) => !/cookie|javascript|구독|로그인|광고|저작권|copyright|무단 전재|전체기사|본문 바로가기/i.test(sentence));
@@ -1151,6 +1152,8 @@ function summarizeArticleHtml(html) {
 function extractArticleMainHtml(html) {
   const source = String(html || "");
   const patterns = [
+    /<article[^>]+id=["']article-view-content-div["'][^>]*>([\s\S]*?)<\/article>/i,
+    /<article[^>]+itemprop=["']articleBody["'][^>]*>([\s\S]*?)<\/article>/i,
     /<[^>]+id=["']realArtcContents["'][^>]*>([\s\S]*?)(?:<div[^>]+id=["']?|<!--\s*google_ad_section_end|<\/article>|<\/section>)/i,
     /<article[^>]*>([\s\S]*?)<\/article>/i,
     /<div[^>]+class=["'][^"']*(?:article|news|content|view)[^"']*["'][^>]*>([\s\S]*?)<\/div>/i
@@ -1160,6 +1163,41 @@ function extractArticleMainHtml(html) {
     if (match?.[1] && cleanArticleText(stripHtml(match[1])).length > 80) return match[1];
   }
   return "";
+}
+
+function extractStructuredArticleBody(html) {
+  const source = String(html || "");
+  const bodies = [];
+  const scripts = source.matchAll(/<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi);
+  for (const match of scripts) {
+    try {
+      collectArticleBodies(JSON.parse(decodeHtml(match[1]).trim()), bodies);
+    } catch {
+      // Some publishers include malformed JSON-LD. The regex fallback below still handles common articleBody fields.
+    }
+  }
+  const fieldMatches = source.matchAll(/"articleBody"\s*:\s*"((?:\\.|[^"\\])*)"/g);
+  for (const match of fieldMatches) {
+    try {
+      bodies.push(JSON.parse(`"${match[1]}"`));
+    } catch {
+      bodies.push(match[1].replace(/\\"/g, "\"").replace(/\\n/g, " "));
+    }
+  }
+  return bodies
+    .map((body) => cleanArticleText(body))
+    .filter((body) => body.length >= 80)
+    .sort((a, b) => b.length - a.length)[0] || "";
+}
+
+function collectArticleBodies(value, bodies) {
+  if (!value || typeof value !== "object") return;
+  if (typeof value.articleBody === "string") bodies.push(value.articleBody);
+  if (Array.isArray(value)) {
+    value.forEach((item) => collectArticleBodies(item, bodies));
+    return;
+  }
+  Object.values(value).forEach((item) => collectArticleBodies(item, bodies));
 }
 
 function extractMetaDescription(html) {
@@ -1188,6 +1226,7 @@ function stripHtml(value) {
 function cleanArticleText(value) {
   return decodeHtml(String(value || ""))
     .replace(/\s+/g, " ")
+    .replace(/([.!?。！？])(?=[가-힣A-Za-z0-9])/g, "$1 ")
     .replace(/&nbsp;/g, " ")
     .trim();
 }

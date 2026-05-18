@@ -49,6 +49,7 @@ const state = {
   selectedArticle: null,
   articleSelections: [],
   articleExtractCache: new Map(),
+  articleExtractSeq: 0,
   articleSearchCache: new Map(),
   articleSearchRequests: new Set(),
   chartRequests: new Set(),
@@ -1023,9 +1024,10 @@ $("#searchLinks")?.addEventListener("click", (event) => {
     try {
       const sources = JSON.parse($("#searchLinks").dataset.sources || "[]");
       const article = sources[Number(sourceIndex)];
-      state.selectedArticle = article || null;
-      text = articleInputText(article);
-      extractSelectedArticle(article);
+      const requestId = ++state.articleExtractSeq;
+      state.selectedArticle = article ? { ...article, extract_status: "loading" } : null;
+      text = articleInputText(state.selectedArticle);
+      extractSelectedArticle(state.selectedArticle, requestId);
     } catch {
       text = "";
     }
@@ -1180,41 +1182,53 @@ function articleInputText(article) {
       article.extract_warning ? `[주의] ${article.extract_warning}` : ""
     ].filter(Boolean).join("\n");
   }
+  if (article.extract_warning) {
+    return [
+      `[선택 기사] ${article.title || ""}`,
+      `[제목 기준]`,
+      article.snippet || article.title || "",
+      article.url ? `원문: ${article.url}` : "",
+      `[주의] ${article.extract_warning}`
+    ].filter(Boolean).join("\n");
+  }
   return [
     `[선택 기사] ${article.title || ""}`,
-    article.snippet || "[본문 추출 전] 뉴스 해석은 현재 제목 기준입니다. 잠시 후 본문 요약을 가져옵니다.",
+    article.extract_status === "loading"
+      ? "[본문 추출 중] 원문을 가져오는 중입니다. 완료되면 자동으로 본문 요약으로 바뀝니다."
+      : (article.snippet || "[제목 기준] 본문 요약을 아직 가져오지 못했습니다."),
     article.url ? `원문: ${article.url}` : ""
   ].filter(Boolean).join("\n");
 }
 
-async function extractSelectedArticle(article) {
+async function extractSelectedArticle(article, requestId = state.articleExtractSeq) {
   if (!article?.url) return;
-  const cacheKey = article.url;
+  const cacheKey = `article-extract-v2:${article.url}`;
   const cached = state.articleExtractCache.get(cacheKey);
   if (cached) {
-    applyArticleExtraction(article, cached);
+    applyArticleExtraction(article, cached, requestId);
     return;
   }
   setOutput("#sentimentOutput", "기사 본문 요약을 가져오는 중입니다. 실패하면 제목 기준으로 해석합니다.");
   try {
     const extracted = await apiPost("/api/article/extract", { url: article.url, title: article.title || "" });
     state.articleExtractCache.set(cacheKey, extracted);
-    applyArticleExtraction(article, extracted);
+    applyArticleExtraction(article, extracted, requestId);
   } catch (error) {
     const fallback = { ok: false, title: article.title || "", summary: article.title || "", final_url: article.url, fallback_reason: `본문 추출 실패: ${error.message}` };
     state.articleExtractCache.set(cacheKey, fallback);
-    applyArticleExtraction(article, fallback);
+    applyArticleExtraction(article, fallback, requestId);
   }
 }
 
-function applyArticleExtraction(article, extracted) {
-  if (!article || state.selectedArticle?.url !== article.url) return;
+function applyArticleExtraction(article, extracted, requestId = state.articleExtractSeq) {
+  if (!article || requestId !== state.articleExtractSeq) return;
   state.selectedArticle = {
     ...article,
     title: extracted.title || article.title,
     extracted_summary: extracted.summary || article.snippet || article.title,
     final_url: extracted.final_url || article.url,
-    extract_warning: extracted.ok ? "" : (extracted.fallback_reason || "본문 추출 실패, 제목 기준으로 해석합니다")
+    extract_warning: extracted.ok ? "" : (extracted.fallback_reason || "본문 추출 실패, 제목 기준으로 해석합니다"),
+    extract_status: extracted.ok ? "ready" : "failed"
   };
   setHybridTextarea("#sentimentText", articleInputText(state.selectedArticle));
   setOutput(

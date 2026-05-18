@@ -1839,6 +1839,13 @@ async function runTool(tool) {
       setReportActionsEnabled(true);
       setOutput("#reportOutput", escapeHtml(data.markdown));
     }
+    if (tool === "report-ai") {
+      setOutput("#reportOutput", "Codex CLI로 전체 신호를 읽고 AI 리포트를 작성하는 중입니다. 보통 20~90초 정도 걸립니다.");
+      const data = await apiPost("/api/codex/report", { signals: state.signals, title: "Finance Signal Radar AI 리포트" });
+      state.lastReport = data;
+      setReportActionsEnabled(true);
+      setOutput("#reportOutput", escapeHtml(data.markdown));
+    }
     if (tool === "report-copy") await copyReport();
     if (tool === "report-download-md") downloadReport("md");
     if (tool === "report-download-html") downloadReport("html");
@@ -1854,6 +1861,7 @@ async function runTool(tool) {
       track: "#trackOutput",
       visualize: "#visualOutput",
       report: "#reportOutput",
+      "report-ai": "#reportOutput",
       "report-copy": "#reportOutput",
       "report-download-md": "#reportOutput",
       "report-download-html": "#reportOutput"

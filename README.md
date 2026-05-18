@@ -14,6 +14,7 @@
 | **신호별 시각화 분석** | 선택 종목의 예측 요약, 판단 흐름, 영향 종목, 차트를 한 화면에 표시 |
 | **뉴스 해석과 기사 검색** | 한국어 기사 검색 결과를 선택하면 원문 본문을 추출해 뉴스 해석 입력창에 자동 반영 |
 | **Codex AI 분석** | Codex CLI를 호출해 선택 기사와 종목 신호의 맥락, 핵심 근거, 리스크, 확인 지표를 LLM으로 정리 |
+| **Codex AI 리포트** | 여러 신호를 LLM으로 종합해 공통 테마, 강한 신호, 상충 리스크, 확인 지표를 문서화 |
 | **고급 분석** | 뉴스 해석, 예측시장 조회, 기사 검색, 리포트 생성을 접이식 보조 분석 영역에서 실행 |
 | **리포트 문서화** | 생성된 리포트를 Markdown으로 복사하거나 Markdown/HTML 문서로 다운로드 |
 | **스크롤 리빌 UI** | 섹션 진입 시 페이드인·슬라이드업, 수치 카운트업, 상단 진행 게이지 제공 |
@@ -35,7 +36,7 @@
 
 ## Codex CLI 연동
 
-뉴스 해석 영역의 **Codex AI 분석** 버튼은 서버에서 Codex CLI를 비대화형으로 실행합니다.
+뉴스 해석 영역의 **Codex AI 분석** 버튼과 리포트 영역의 **AI 리포트** 버튼은 서버에서 Codex CLI를 비대화형으로 실행합니다.
 
 사용 명령 형태:
 
@@ -114,6 +115,7 @@ pm2 start server.js --name finance-dashboard
 | POST | `/api/article/extract` | Google News 또는 원문 기사 URL에서 본문 요약 추출 |
 | POST | `/api/sentiment/analyze` | 감성 분석 |
 | POST | `/api/codex/analyze` | Codex CLI 기반 기사·종목 AI 분석 |
+| POST | `/api/codex/report` | Codex CLI 기반 전체 신호 AI 리포트 생성 |
 | POST | `/api/visualize/chain` | 논리체인 SVG 시각화 |
 | POST | `/api/report/generate` | 리포트 생성 |
 

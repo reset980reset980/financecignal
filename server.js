@@ -204,6 +204,11 @@ async function routeApi(req, res, url) {
     sendJson(res, 200, generateReport(body.signals || [], body.title || "금융 신호 리포트"));
     return;
   }
+  if (req.method === "POST" && url.pathname === "/api/codex/report") {
+    const body = await readBody(req);
+    sendJson(res, 200, await generateCodexReport(body.signals || [], body.title || "Finance Signal Radar AI 리포트"));
+    return;
+  }
   if (req.method === "GET" && url.pathname === "/api/translate") {
     const text = url.searchParams.get("text") || "";
     sendJson(res, 200, { text, translated: await translate(text) });
@@ -1970,6 +1975,74 @@ function generateReport(signals, title) {
   const rows = signals.map((signal, index) => `${index + 1}. ${signal.title || "신호"}\n   - 요약: ${signal.summary || "-"}\n   - 신뢰도: ${Math.round(Number(signal.confidence || 0) * 100)}%\n   - 강도: ${signal.intensity || "-"}\n`).join("\n");
   const markdown = `# ${title}\n\n생성시각: ${new Date().toLocaleString("ko-KR")}\n\n## 요약\n총 ${signals.length}개 신호를 분석했습니다.\n\n## 신호 목록\n${rows || "- 신호 없음"}\n## 주의\n본 리포트는 공개 데이터 기반 자동 생성 결과이며 투자 조언이 아닙니다.\n`;
   return { title, markdown, html: markdownToHtml(markdown) };
+}
+
+async function generateCodexReport(signals, title) {
+  const startedAt = Date.now();
+  const compactSignals = (signals || []).slice(0, 12).map(compactSignalForPrompt);
+  if (!compactSignals.length) {
+    const empty = `# ${title}\n\n생성시각: ${new Date().toLocaleString("ko-KR")}\n\n분석할 신호가 없습니다.\n\n## 주의\n본 리포트는 공개 데이터 기반 분석 보조이며 투자 조언이 아닙니다.\n`;
+    return { ok: false, title, markdown: empty, html: markdownToHtml(empty), provider: "codex-cli", model: CODEX_MODEL };
+  }
+
+  try {
+    const raw = await runCodexExec(buildCodexReportPrompt(title, compactSignals));
+    const markdown = normalizeCodexMarkdown(raw, title);
+    return {
+      ok: true,
+      provider: "codex-cli",
+      model: CODEX_MODEL,
+      duration_ms: Date.now() - startedAt,
+      title,
+      markdown,
+      html: markdownToHtml(markdown)
+    };
+  } catch (error) {
+    const fallback = generateReport(signals, title);
+    const markdown = `${fallback.markdown}\n## AI 리포트 생성 실패\nCodex CLI 오류: ${error.message}\n`;
+    return {
+      ok: false,
+      provider: "codex-cli",
+      model: CODEX_MODEL,
+      duration_ms: Date.now() - startedAt,
+      title,
+      markdown,
+      html: markdownToHtml(markdown)
+    };
+  }
+}
+
+function buildCodexReportPrompt(title, signals) {
+  return [
+    "너는 한국어 금융 신호 대시보드의 리포트 작성 엔진이다.",
+    "투자 조언, 매수/매도 지시, 확정적 수익 표현은 금지한다.",
+    "아래 신호 데이터만 근거로 공통 테마, 상충 신호, 리스크, 다음 확인 지표를 정리한다.",
+    "마크다운 문서만 출력한다. 코드블록은 쓰지 않는다.",
+    "문서 구조:",
+    `# ${title}`,
+    "## 한 줄 결론",
+    "## 시장 테마 요약",
+    "## 강한 신호",
+    "## 상충 신호와 리스크",
+    "## 다음에 확인할 지표",
+    "## 주의",
+    "",
+    "[신호 데이터]",
+    JSON.stringify(signals, null, 2)
+  ].join("\n");
+}
+
+function normalizeCodexMarkdown(raw, title) {
+  const body = String(raw || "")
+    .trim()
+    .replace(/^```(?:markdown|md)?\s*/i, "")
+    .replace(/\s*```$/i, "")
+    .trim();
+  const header = body.startsWith("# ") ? body : `# ${title}\n\n${body}`;
+  const notice = /투자 조언|투자조언/.test(header)
+    ? ""
+    : "\n\n## 주의\n본 리포트는 공개 데이터 기반 분석 보조이며 투자 조언이 아닙니다.";
+  return `${header}${notice}\n`;
 }
 
 async function translate(text) {

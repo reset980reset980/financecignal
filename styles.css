@@ -182,7 +182,7 @@ button {
 
 .skill-console {
   margin-bottom: 14px;
-  padding: 18px;
+  padding: clamp(16px, 2.4vw, 28px);
   border: 1px solid rgba(255, 250, 240, 0.15);
   border-radius: 8px;
   background: rgba(247, 242, 230, 0.94);
@@ -230,20 +230,54 @@ button {
   gap: 8px;
 }
 
+.predict-command {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--white);
+}
+
+.predict-input-row {
+  display: grid;
+  gap: 8px;
+}
+
+.predict-input-row label {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.predict-command input,
 .tool-grid input,
 .tool-grid select,
 .tool-grid textarea {
   width: 100%;
   border: 1px solid var(--line);
   border-radius: 8px;
-  padding: 9px 10px;
+  padding: 12px 14px;
   background: #fffdf7;
   color: var(--ink);
 }
 
+.predict-command input {
+  min-height: 52px;
+  font-size: 17px;
+  font-weight: 800;
+}
+
+.predict-command input:focus {
+  border-color: rgba(15, 123, 95, 0.75);
+  box-shadow: 0 0 0 3px rgba(15, 123, 95, 0.14);
+  outline: none;
+}
+
+.predict-command button,
 .tool-grid button {
-  min-height: 38px;
-  padding: 0 12px;
+  min-height: 52px;
+  padding: 0 18px;
   white-space: nowrap;
 }
 
@@ -257,6 +291,38 @@ button {
   color: #303832;
   font-size: 13px;
   line-height: 1.55;
+}
+
+.predict-output {
+  max-height: none;
+  min-height: 64px;
+}
+
+.prediction-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.prediction-summary div {
+  padding: 10px;
+  border: 1px solid rgba(23, 33, 28, 0.12);
+  border-radius: 8px;
+  background: #fffdf7;
+}
+
+.prediction-summary span {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.prediction-summary strong {
+  display: block;
+  margin-top: 4px;
+  font-size: 16px;
 }
 
 .tool-output a {
@@ -1121,6 +1187,7 @@ meter {
   .market-strip,
   .score-grid,
   .phase-flow,
+  .prediction-summary,
   .visual-card-body,
   .visual-card-foot {
     grid-template-columns: 1fr 1fr;
@@ -1139,7 +1206,16 @@ meter {
 @media (max-width: 520px) {
   .market-strip,
   .score-grid,
-  .filters {
+  .filters,
+  .prediction-summary {
     grid-template-columns: 1fr;
+  }
+
+  .inline-form {
+    flex-direction: column;
+  }
+
+  .predict-command button {
+    width: 100%;
   }
 }

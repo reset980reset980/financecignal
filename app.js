@@ -330,9 +330,6 @@ function setSyncedInput(selector, value, force = false) {
 function syncToolInputsFromSelection(force = false) {
   if (!state.selectedSignal) return;
   const stockName = selectedStockName();
-  setSyncedInput("#polyQuery", selectedPredictionQuery(), force);
-  setSyncedInput("#searchQuery", selectedNewsQuery(), force);
-  setSyncedInput("#stockQuery", stockName, force);
   setSyncedInput("#predictTicker", stockName || state.selectedTicker, force);
 }
 
@@ -867,7 +864,7 @@ function escapeJs(value) {
 }
 
 $("#refreshBtn").addEventListener("click", loadData);
-$("#searchInput").addEventListener("input", (event) => {
+$("#searchInput")?.addEventListener("input", (event) => {
   state.query = event.target.value;
   syncSelectionWithVisibleSignals();
   syncToolInputsFromSelection(true);
@@ -1005,6 +1002,39 @@ function renderStockLookup(found, price, fundamentals, ticker) {
     최근 종가: ${escapeHtml(String(latest ?? "데이터 없음"))}<br>
     1개월 변화율: ${escapeHtml(String(fundamentals.one_month_change_percent ?? 0))}%<br>
     가격 데이터: ${price.prices.length}개
+    ${candidates ? `<div class="candidate-list"><small>검색 후보</small><div>${candidates}</div></div>` : ""}
+  `;
+}
+
+function formatMarketValue(value, currency) {
+  const amount = Number(value);
+  if (!Number.isFinite(amount)) return "데이터 없음";
+  if (currency === "KRW") return formatWon(amount);
+  return `${amount.toLocaleString("ko-KR", { maximumFractionDigits: 2 })} ${currency || ""}`.trim();
+}
+
+function renderMarketPredictionResult(found, data, linkedSignal) {
+  const candidates = (found.results || []).slice(0, 6).map((stock, index) => `
+    <span class="pill ${index === 0 ? "strong" : ""}">
+      ${escapeHtml(stock.name || stock.ticker)} · ${escapeHtml(stock.ticker || stock.code)} · ${escapeHtml(stock.market || stock.market_name || "")}
+    </span>
+  `).join("");
+  const latest = data.prices?.at(-1);
+  const forecast = data.forecast || [];
+  const lastForecast = forecast.at(-1);
+  const currency = data.display_currency || data.currency || "";
+  const latestText = latest?.close_krw ? formatWon(latest.close_krw) : formatMarketValue(latest?.close, currency);
+  const targetText = lastForecast?.close_krw ? formatWon(lastForecast.close_krw) : formatMarketValue(lastForecast?.close, currency);
+  const change = Number(data.forecast_change_percent || 0);
+  return `
+    <strong>${escapeHtml(data.name)} (${escapeHtml(data.ticker)})</strong>
+    <div class="prediction-summary">
+      <div><span>최근 종가</span><strong>${escapeHtml(latestText)}</strong></div>
+      <div><span>${escapeHtml(data.expected_horizon || "T+5")} 예상</span><strong>${escapeHtml(targetText)}</strong></div>
+      <div><span>예측 변화율</span><strong>${change >= 0 ? "+" : ""}${change.toFixed(2)}%</strong></div>
+      <div><span>신뢰도</span><strong>${Number(data.confidence || 0)}%</strong></div>
+    </div>
+    <div class="tool-notice good">차트와 신호 상세가 아래 패널에 반영됐습니다.${linkedSignal ? ` 선택 신호: ${escapeHtml(koText(linkedSignal.title || data.name))}` : ""}</div>
     ${candidates ? `<div class="candidate-list"><small>검색 후보</small><div>${candidates}</div></div>` : ""}
   `;
 }
@@ -1302,16 +1332,22 @@ async function runTool(tool) {
     }
     if (tool === "predict") {
       const rawTicker = document.querySelector("#predictTicker").value || state.selectedTicker || "005930.KS";
+      setOutput("#predictOutput", "종목을 찾고 예측 차트를 생성하는 중입니다.");
       let ticker = rawTicker;
+      let found = { results: [] };
       try {
-        const found = await apiGet(`/api/stock/search?q=${encodeURIComponent(rawTicker)}`);
+        found = await apiGet(`/api/stock/search?q=${encodeURIComponent(rawTicker)}`);
+        if (!found.results?.length) {
+          setOutput("#predictOutput", `검색 결과가 없습니다: ${escapeHtml(rawTicker)}<br><small>종목명, 티커, 영문 회사명으로 다시 입력해보세요.</small>`);
+          return;
+        }
         ticker = found.results?.[0]?.ticker || rawTicker;
       } catch {
         ticker = rawTicker;
       }
       const data = await apiGet(`/api/predict?ticker=${encodeURIComponent(ticker)}&days=5`);
       const linkedSignal = applyPredictionToSignal(data);
-      setOutput("#predictOutput", `<strong>${escapeHtml(data.name)} (${escapeHtml(data.ticker)})</strong><br>방식: ${escapeHtml(data.method)}<br>신뢰도: ${data.confidence}%<br>${linkedSignal ? `선택 신호 시각화 반영: ${escapeHtml(koText(linkedSignal.title || data.name))}<br>` : ""}${data.forecast.map((point) => `${point.date}: ${point.close_krw ? `₩${point.close_krw.toLocaleString("ko-KR")}` : point.close}`).join("<br>")}`);
+      setOutput("#predictOutput", renderMarketPredictionResult(found, data, linkedSignal));
     }
     if (tool === "track") {
       const newInfo = document.querySelector("#trackText").value || articleInputText(state.selectedArticle) || "새 정보 없음";

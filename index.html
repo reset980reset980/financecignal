@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Finance Signal Radar</title>
-    <link rel="stylesheet" href="./styles.css?v=15" />
+    <link rel="stylesheet" href="./styles.css?v=16" />
   </head>
   <body>
     <header class="topbar">
@@ -63,96 +63,30 @@
         <div id="visualFeed" class="visual-feed" aria-live="polite"></div>
       </section>
 
-      <section class="skill-console" aria-label="전체 금융 스킬 기능">
+      <section class="skill-console" aria-label="시장 예측">
         <div class="console-head">
           <div>
-            <p class="eyebrow">Awesome Finance Skills API</p>
-            <h2>금융 분석 실행 메뉴</h2>
+            <p class="eyebrow">종목명 하나로 시세·예측·차트 생성</p>
+            <h2>시장 예측</h2>
           </div>
           <span id="apiHealth">API 확인 중</span>
         </div>
-        <div class="tool-grid">
-          <article>
-            <h3>뉴스·트렌드</h3>
+        <div class="predict-command">
+          <div class="predict-input-row">
+            <label for="predictTicker">종목명 또는 티커</label>
             <div class="inline-form">
-              <select id="newsSource">
-                <option value="korean_market">한국 금융시장</option>
-                <option value="kospi">코스피</option>
-                <option value="kosdaq">코스닥</option>
-                <option value="semiconductor">반도체</option>
-                <option value="battery">2차전지</option>
-                <option value="ai_platform">AI·플랫폼</option>
-                <option value="fx_rate">환율·금리</option>
-                <option value="global">글로벌 증시</option>
-              </select>
-              <button type="button" data-tool="news">불러오기</button>
+              <input id="predictTicker" placeholder="예: 엔비디아, 팔란티어, 한화오션, 005930.KS, NVDA" />
+              <button type="button" data-tool="predict">예측 생성</button>
             </div>
-            <div id="newsOutput" class="tool-output"></div>
-          </article>
-          <article>
-            <h3>예측시장</h3>
-            <div class="inline-form">
-              <input id="polyQuery" placeholder="비워두면 선택 신호로 자동 검색" />
-              <button type="button" data-tool="polymarket">금융 예측 조회</button>
-            </div>
-            <div id="polyOutput" class="tool-output"></div>
-          </article>
-          <article>
-            <h3>한국어 기사 검색</h3>
-            <div class="inline-form">
-              <input id="searchQuery" placeholder="삼성전자 반도체 실적" />
-              <button type="button" data-tool="search">검색 링크</button>
-            </div>
-            <div id="searchOutput" class="tool-output"></div>
-          </article>
-          <article>
-            <h3>종목 검색·시세</h3>
-            <div class="inline-form">
-              <input id="stockQuery" placeholder="삼성전자, 애플, 테슬라, AAPL" />
-              <button type="button" data-tool="stock">조회</button>
-            </div>
-            <div id="stockOutput" class="tool-output"></div>
-          </article>
-          <article>
-            <h3>감성 분석</h3>
-            <textarea id="sentimentText" rows="4" placeholder="분석할 금융 뉴스 문장을 입력"></textarea>
-            <button type="button" data-tool="sentiment">감성 점수</button>
-            <div id="sentimentOutput" class="tool-output"></div>
-          </article>
-          <article>
-            <h3>시장 예측</h3>
-            <div class="inline-form">
-              <input id="predictTicker" placeholder="삼성전자, 현대차, AAPL, 테슬라" />
-              <button type="button" data-tool="predict">예측</button>
-            </div>
-            <div id="predictOutput" class="tool-output"></div>
-          </article>
-          <article>
-            <h3>신호 추적</h3>
-            <textarea id="trackText" rows="4" placeholder="기존 선택 신호를 강화/약화할 새 기사, 가격, 공시 근거를 입력"></textarea>
-            <button type="button" data-tool="track">강화·약화 판정</button>
-            <div id="trackOutput" class="tool-output"></div>
-          </article>
-          <article>
-            <h3>논리 체인 시각화</h3>
-            <button type="button" data-tool="visualize">선택 신호 시각화</button>
-            <div id="visualOutput" class="tool-output visual-output"></div>
-          </article>
-          <article>
-            <h3>리포트 생성</h3>
-            <button type="button" data-tool="report">현재 신호 리포트</button>
-            <div id="reportOutput" class="tool-output report-output"></div>
-          </article>
+          </div>
+          <div id="predictOutput" class="tool-output predict-output"></div>
         </div>
       </section>
 
       <section class="dashboard">
         <aside class="feed" aria-label="금융 신호 목록">
           <div class="feed-tools">
-            <label>
-              <span>검색</span>
-              <input id="searchInput" type="search" placeholder="뉴스, 종목, 논리..." />
-            </label>
+            <span>신호 필터</span>
             <div class="filters" role="group" aria-label="신호 필터">
               <button class="active" data-filter="all">전체</button>
               <button data-filter="positive">긍정</button>
@@ -248,6 +182,6 @@
       </section>
     </main>
 
-    <script src="./app.js?v=19"></script>
+    <script src="./app.js?v=20"></script>
   </body>
 </html>

@@ -812,7 +812,7 @@ button {
 
 .metric-bar {
   display: grid;
-  grid-template-columns: 42px 34px 1fr;
+  grid-template-columns: 82px 34px 1fr;
   gap: 8px;
   align-items: center;
   color: #b9c5cf;
@@ -1107,6 +1107,10 @@ button {
   grid-template-columns: repeat(4, 1fr);
   gap: 10px;
   margin: 18px 0 12px;
+}
+
+.compact-metrics {
+  display: none;
 }
 
 .score-grid div {

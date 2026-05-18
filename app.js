@@ -56,9 +56,9 @@ const state = {
 
 const FILTER_LABELS = {
   all: "전체",
-  positive: "긍정",
+  positive: "상승",
   neutral: "중립",
-  negative: "부정"
+  negative: "하락"
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -214,8 +214,8 @@ function koSourceName(value) {
 
 function moodOf(score) {
   const value = Number(score) || 0;
-  if (value > 0.08) return { key: "positive", label: "긍정", className: "good" };
-  if (value < -0.08) return { key: "negative", label: "부정", className: "bad" };
+  if (value > 0.08) return { key: "positive", label: "상승", className: "good" };
+  if (value < -0.08) return { key: "negative", label: "하락", className: "bad" };
   return { key: "neutral", label: "중립", className: "neutral" };
 }
 
@@ -225,9 +225,23 @@ function impactLabel(value) {
     "利空": "악재",
     "中性": "중립",
     "中性偏空": "중립·약세",
-    "中性偏多": "중립·강세"
+    "中性偏多": "중립·강세",
+    "긍정": "상승 쪽",
+    "부정": "하락 쪽",
+    "positive": "상승 쪽",
+    "negative": "하락 쪽"
   };
   return map[value] || value || "영향";
+}
+
+function chainNodeLabel(value) {
+  const map = {
+    "기사 감성": "뉴스 해석",
+    "한국어 기사": "뉴스 근거",
+    "가격·예측": "가격 예측",
+    "영향 종목": "대상 종목"
+  };
+  return map[value] || koText(value || "단계");
 }
 
 function textCorpus(signal) {
@@ -263,8 +277,8 @@ function syncSelectionWithVisibleSignals() {
     return;
   }
   if (!visible.some((signal) => signal.signal_id === state.selectedSignal?.signal_id)) {
-    state.selectedSignal = visible[0];
-    state.selectedTicker = firstTicker(visible[0]);
+    state.selectedSignal = null;
+    state.selectedTicker = null;
   }
 }
 
@@ -276,13 +290,13 @@ async function loadData() {
     const data = await response.json();
     state.data = data;
     state.signals = Array.isArray(data.signals) ? data.signals : [];
-    state.selectedSignal = state.signals[0] || null;
-    state.selectedTicker = firstTicker(state.selectedSignal);
-    syncToolInputsFromSelection(true);
+    state.selectedSignal = null;
+    state.selectedTicker = null;
+    const predictInput = document.querySelector("#predictTicker");
+    if (predictInput) predictInput.value = "";
     render();
     setSync("한국어 번역 중");
     localizeData(data).then(() => {
-      syncToolInputsFromSelection(true);
       render();
       setSync("실시간 연결");
     });
@@ -329,10 +343,8 @@ function setSyncedInput(selector, value, force = false) {
 
 function syncToolInputsFromSelection(force = false) {
   if (!state.selectedSignal) return;
-  const stockName = selectedStockName();
   setSyncedInput("#polyQuery", selectedPredictionQuery(), force);
   setSyncedInput("#searchQuery", selectedNewsQuery(), force);
-  setSyncedInput("#predictTicker", stockName || state.selectedTicker, force);
 }
 
 function render() {
@@ -374,7 +386,7 @@ function renderSignalList() {
     button.innerHTML = `
       <div class="mini-row">
         <span class="pill ${mood.className}">${mood.label}</span>
-        <span class="pill">신뢰도 ${formatPercent(signal.confidence)}</span>
+        <span class="pill">확실성 ${formatPercent(signal.confidence)}</span>
       </div>
       <h3>${escapeHtml(koText(signal.title || "제목 없음"))}</h3>
       <p>${escapeHtml(koText(signal.summary || "")).slice(0, 145)}${koText(signal.summary || "").length > 145 ? "..." : ""}</p>
@@ -434,12 +446,12 @@ function renderProgressFlow() {
 function renderVisualFeed() {
   const container = $("#visualFeed");
   if (!container) return;
-  const list = filteredSignals();
-  if (!list.length) {
-    container.innerHTML = `<div class="empty">시각화할 신호가 없습니다.</div>`;
+  const signal = state.selectedSignal;
+  if (!signal) {
+    container.innerHTML = `<div class="empty">종목을 입력해 예측을 만들거나 아래 신호 카드를 선택하면 여기에는 해당 종목만 표시됩니다.</div>`;
     return;
   }
-  container.innerHTML = list.map((signal, index) => visualSignalCard(signal, index)).join("");
+  container.innerHTML = visualSignalCard(signal, 0);
 }
 
 function visualSignalCard(signal, index) {
@@ -470,19 +482,19 @@ function visualSignalCard(signal, index) {
       <div class="visual-card-body">
         <div class="radar-box">
           ${radarSvg(metrics, mood.className)}
-          <div class="radar-caption">감성 · 신뢰도 · 강도 · 예상 괴리 · 시의성</div>
+          <div class="radar-caption">예측 방향 · 데이터 확실성 · 변동 강도 · 가격 괴리 · 최신성</div>
         </div>
         <div class="metric-stack">
-          ${metricBar("감성", metrics.sentiment)}
-          ${metricBar("신뢰도", metrics.confidence)}
-          ${metricBar("강도", metrics.intensity)}
-          ${metricBar("괴리", metrics.expectationGap)}
-          ${metricBar("시의성", metrics.timeliness)}
-          ${prediction.confidence ? `<div class="prediction-inline"><strong>예측 신뢰도 ${escapeHtml(String(prediction.confidence))}%</strong><span>범위 ${escapeHtml(String(prediction.target_low ?? "-"))}% ~ ${escapeHtml(String(prediction.target_high ?? "-"))}%</span></div>` : ""}
+          ${metricBar("예측 방향", metrics.sentiment)}
+          ${metricBar("데이터 확실성", metrics.confidence)}
+          ${metricBar("변동 강도", metrics.intensity)}
+          ${metricBar("가격 괴리", metrics.expectationGap)}
+          ${metricBar("최신성", metrics.timeliness)}
+          ${prediction.confidence ? `<div class="prediction-inline"><strong>예측 확실성 ${escapeHtml(String(prediction.confidence))}%</strong><span>범위 ${escapeHtml(String(prediction.target_low ?? "-"))}% ~ ${escapeHtml(String(prediction.target_high ?? "-"))}%</span></div>` : ""}
           ${predictionMarket ? `<div class="prediction-inline market"><strong>예측시장 ${escapeHtml(predictionMarket.matched ? "직접 반영" : "직접 매칭 없음")}</strong><span>${escapeHtml(predictionMarket.matched ? (predictionMarket.probability ? `대표 확률 ${predictionMarket.probability}%` : predictionMarket.question || "직접 관련 시장") : "관련 없는 검색 결과 배제")}</span></div>` : ""}
         </div>
         <div class="mini-chain-map">
-          <div class="mini-chain-title">전달 그래프</div>
+          <div class="mini-chain-title">판단 흐름</div>
           ${chainGraphSvg(chain, mood.className)}
         </div>
       </div>
@@ -519,7 +531,7 @@ function signalMetrics(signal) {
 }
 
 function radarSvg(metrics, moodClass) {
-  const labels = ["감성", "신뢰", "강도", "괴리", "시의"];
+  const labels = ["방향", "확실", "변동", "괴리", "최신"];
   const values = [metrics.sentiment, metrics.confidence, metrics.intensity, metrics.expectationGap, metrics.timeliness];
   const cx = 96;
   const cy = 90;
@@ -563,7 +575,7 @@ function miniChain(chain) {
       ${chain.slice(0, 4).map((node, index) => `
         <div class="chain-node">
           <b>${index + 1}</b>
-          <span>${escapeHtml(koText(node.node_name || "단계"))}</span>
+          <span>${escapeHtml(chainNodeLabel(node.node_name || "단계"))}</span>
           <small>${escapeHtml(impactLabel(node.impact_type))}</small>
         </div>
       `).join("")}
@@ -591,7 +603,7 @@ function chainGraphSvg(chain, moodClass) {
   const nodeSvg = nodes.map((node, index) => {
     const x = 34 + index * step;
     const color = colorFor(node.impact_type);
-    const name = truncateLabel(koText(node.node_name || `단계 ${index + 1}`), 7);
+    const name = truncateLabel(chainNodeLabel(node.node_name || `단계 ${index + 1}`), 7);
     const impact = truncateLabel(impactLabel(node.impact_type), 6);
     return `
       <g class="graph-node">
@@ -624,14 +636,14 @@ function renderDetail() {
   const signal = state.selectedSignal;
   if (!signal) {
     $("#detailSource").textContent = "필터 결과";
-    $("#detailTitle").textContent = "조건에 맞는 신호가 없습니다";
+    $("#detailTitle").textContent = "종목을 입력하거나 아래 신호 카드를 선택하세요";
     $("#detailMood").textContent = "-";
     $("#detailMood").className = "mood neutral";
     setMetric("sentiment", 0, "0.00");
     setMetric("confidence", 0, "0%");
     setMetric("intensity", 0, "0");
     setMetric("timeliness", 0, "0%");
-    $("#summaryText").textContent = "검색어 또는 긍정·중립·부정 필터를 바꾸면 결과가 다시 표시됩니다.";
+    $("#summaryText").textContent = "상단 시장 예측에 종목을 입력하면 이 영역에 해당 종목의 결과가 표시됩니다. 아래 카드에서 기존 신호를 선택할 수도 있습니다.";
     $("#reasoningText").textContent = "-";
     $("#chainCount").textContent = "0단계";
     $("#chainList").innerHTML = "";
@@ -674,7 +686,7 @@ function renderChain(signal) {
   $("#chainCount").textContent = `${chain.length}단계`;
   $("#chainList").innerHTML = chain.map((node) => `
     <li>
-      <strong>${escapeHtml(koText(node.node_name || "단계"))} · ${escapeHtml(impactLabel(node.impact_type))}</strong>
+      <strong>${escapeHtml(chainNodeLabel(node.node_name || "단계"))} · ${escapeHtml(impactLabel(node.impact_type))}</strong>
       <span>${escapeHtml(koText(node.logic || ""))}</span>
     </li>
   `).join("");
@@ -722,6 +734,14 @@ function renderChart() {
   const canvas = $("#priceChart");
   const ctx = canvas.getContext("2d");
   ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  if (!state.selectedTicker) {
+    $("#chartTitle").textContent = "가격·예측 차트";
+    $("#chartMeta").textContent = "종목을 입력하거나 아래 카드에서 종목을 선택하면 차트가 표시됩니다.";
+    $("#predictionRange").textContent = "-";
+    drawEmpty(ctx, canvas, "종목 선택 전");
+    return;
+  }
 
   if (!chart) {
     $("#chartTitle").textContent = "가격·예측 차트";
@@ -977,9 +997,6 @@ function renderSearchResults(data) {
       <p>${escapeHtml(article.snippet || "")}</p>
       <div class="article-actions">
         <a href="${escapeAttr(article.url || "#")}" target="_blank" rel="noopener noreferrer">원문 열기</a>
-        <button type="button" data-article-action="sentiment" data-article-index="${index}">감성 입력</button>
-        <button type="button" data-article-action="track" data-article-index="${index}">추적 입력</button>
-        <button type="button" data-article-action="sentiment-run" data-article-index="${index}">바로 감성분석</button>
       </div>
     </article>
   `).join("");
@@ -1034,7 +1051,7 @@ function renderMarketPredictionResult(found, data, linkedSignal) {
       <div><span>최근 종가</span><strong>${escapeHtml(latestText)}</strong></div>
       <div><span>${escapeHtml(data.expected_horizon || "T+5")} 예상</span><strong>${escapeHtml(targetText)}</strong></div>
       <div><span>예측 변화율</span><strong>${change >= 0 ? "+" : ""}${change.toFixed(2)}%</strong></div>
-      <div><span>신뢰도</span><strong>${Number(data.confidence || 0)}%</strong></div>
+      <div><span>예측 확실성</span><strong>${Number(data.confidence || 0)}%</strong></div>
     </div>
     <div class="tool-notice good">차트와 신호 상세가 아래 패널에 반영됐습니다.${linkedSignal ? ` 선택 신호: ${escapeHtml(koText(linkedSignal.title || data.name))}` : ""}</div>
     ${candidates ? `<div class="candidate-list"><small>검색 후보</small><div>${candidates}</div></div>` : ""}
@@ -1392,28 +1409,9 @@ document.querySelectorAll("[data-tool]").forEach((button) => {
   button.addEventListener("click", () => runTool(button.dataset.tool));
 });
 
-$("#searchOutput")?.addEventListener("click", (event) => {
-  const button = event.target.closest("[data-article-action]");
-  if (!button) return;
-  const article = state.articleSelections[Number(button.dataset.articleIndex)];
-  if (!article) return;
-  state.selectedArticle = article;
-  const text = articleInputText(article);
-  if (button.dataset.articleAction === "sentiment" || button.dataset.articleAction === "sentiment-run") {
-    setHybridTextarea("#sentimentText", text);
-    setOutput("#sentimentOutput", `<strong>기사 선택됨</strong><br>${escapeHtml(article.title || "")}<br>직접 문장을 더 입력한 뒤 감성 점수를 실행할 수 있습니다.`);
-  }
-  if (button.dataset.articleAction === "track") {
-    setHybridTextarea("#trackText", text);
-    setOutput("#trackOutput", `<strong>기사 선택됨</strong><br>${escapeHtml(article.title || "")}<br>직접 문장을 더 입력한 뒤 강화·약화 판정을 실행할 수 있습니다.`);
-  }
-  if (button.dataset.articleAction === "sentiment-run") runTool("sentiment");
-});
-
 [
   ["#polyQuery", "polymarket"],
   ["#searchQuery", "search"],
-  ["#stockQuery", "stock"],
   ["#predictTicker", "predict"],
 ].forEach(([selector, tool]) => {
   const el = document.querySelector(selector);

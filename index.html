@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Finance Signal Radar</title>
-    <link rel="stylesheet" href="./styles.css?v=17" />
+    <link rel="stylesheet" href="./styles.css?v=18" />
   </head>
   <body>
     <header class="topbar">
@@ -32,7 +32,7 @@
           <strong id="signalCount">0</strong>
         </article>
         <article>
-          <span>평균 신뢰도</span>
+          <span>평균 확실성</span>
           <strong id="avgConfidence">0%</strong>
         </article>
         <article>
@@ -58,7 +58,7 @@
             <p class="eyebrow">신호 품질·전달경로 시각화</p>
             <h2>신호별 시각화 분석</h2>
           </div>
-          <span>ISQ 레이더 · 전달 그래프 · 원화 차트 연결</span>
+          <span>선택한 종목의 예측 요약 · 판단 흐름 · 원화 차트 연결</span>
         </div>
         <div id="visualFeed" class="visual-feed" aria-live="polite"></div>
       </section>
@@ -86,7 +86,7 @@
           <summary role="button" aria-label="고급 분석 열기">
             <span>
               <strong>고급 분석</strong>
-              <small>뉴스, 예측시장, 감성, 추적, 리포트</small>
+              <small>뉴스, 예측시장, 기사 검색, 리포트</small>
             </span>
             <b>열기</b>
           </summary>
@@ -128,26 +128,10 @@
             </article>
 
             <article>
-              <h3>감성 분석</h3>
-              <textarea id="sentimentText" rows="4" placeholder="분석할 금융 뉴스 문장을 입력"></textarea>
-              <button type="button" data-tool="sentiment">감성 점수</button>
-              <div id="sentimentOutput" class="tool-output"></div>
-            </article>
-
-            <article>
-              <h3>신호 추적</h3>
-              <textarea id="trackText" rows="4" placeholder="선택 신호를 강화/약화할 새 기사, 가격, 공시 근거 입력"></textarea>
-              <button type="button" data-tool="track">강화·약화 판정</button>
-              <div id="trackOutput" class="tool-output"></div>
-            </article>
-
-            <article>
-              <h3>리포트·체인</h3>
+              <h3>리포트 생성</h3>
               <div class="button-row">
-                <button type="button" data-tool="visualize">체인 시각화</button>
                 <button type="button" data-tool="report">리포트 생성</button>
               </div>
-              <div id="visualOutput" class="tool-output visual-output"></div>
               <div id="reportOutput" class="tool-output report-output"></div>
             </article>
           </div>
@@ -160,9 +144,9 @@
             <span>신호 필터</span>
             <div class="filters" role="group" aria-label="신호 필터">
               <button class="active" data-filter="all">전체</button>
-              <button data-filter="positive">긍정</button>
+              <button data-filter="positive">상승</button>
               <button data-filter="neutral">중립</button>
-              <button data-filter="negative">부정</button>
+              <button data-filter="negative">하락</button>
             </div>
           </div>
           <div id="signalList" class="signal-list" aria-live="polite"></div>
@@ -177,14 +161,14 @@
             <span id="detailMood" class="mood">-</span>
           </div>
 
-          <div class="score-grid">
+          <div class="score-grid compact-metrics" aria-hidden="true">
             <div>
               <span>감성</span>
               <strong id="sentimentScore">0.00</strong>
               <meter id="sentimentMeter" min="-1" max="1" value="0"></meter>
             </div>
             <div>
-              <span>신뢰도</span>
+              <span>확실성</span>
               <strong id="confidenceScore">0%</strong>
               <meter id="confidenceMeter" min="0" max="1" value="0"></meter>
             </div>
@@ -213,7 +197,7 @@
           <div class="split">
             <article class="analysis-card">
               <div class="section-title">
-                <h3>전달 체인</h3>
+                <h3>판단 흐름</h3>
                 <span id="chainCount">0단계</span>
               </div>
               <ol id="chainList" class="chain-list"></ol>
@@ -253,6 +237,6 @@
       </section>
     </main>
 
-    <script src="./app.js?v=21"></script>
+    <script src="./app.js?v=22"></script>
   </body>
 </html>

@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Finance Signal Radar</title>
-    <link rel="stylesheet" href="./styles.css?v=9" />
+    <link rel="stylesheet" href="./styles.css?v=11" />
   </head>
   <body>
     <header class="topbar">
@@ -39,6 +39,28 @@
           <span>영향 종목</span>
           <strong id="tickerCount">0</strong>
         </article>
+      </section>
+
+      <section class="process-panel" aria-label="분석 진행과정">
+        <div class="process-head">
+          <div>
+            <p class="eyebrow">원본 분석 흐름 반영</p>
+            <h2>진행과정</h2>
+          </div>
+          <span id="processSummary">대기 중</span>
+        </div>
+        <div id="phaseFlow" class="phase-flow" aria-live="polite"></div>
+      </section>
+
+      <section class="visual-feed-panel" aria-label="시각화 신호 피드">
+        <div class="visual-feed-head">
+          <div>
+            <p class="eyebrow">신호 품질·전달경로 시각화</p>
+            <h2>신호별 시각화 분석</h2>
+          </div>
+          <span>ISQ 레이더 · 전달 그래프 · 원화 차트 연결</span>
+        </div>
+        <div id="visualFeed" class="visual-feed" aria-live="polite"></div>
       </section>
 
       <section class="skill-console" aria-label="전체 금융 스킬 기능">
@@ -226,6 +248,6 @@
       </section>
     </main>
 
-    <script src="./app.js?v=9"></script>
+    <script src="./app.js?v=11"></script>
   </body>
 </html>

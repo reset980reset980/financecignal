@@ -271,6 +271,8 @@ function firstTicker(signal) {
 
 function render() {
   renderSummary();
+  renderProgressFlow();
+  renderVisualFeed();
   renderSignalList();
   renderDetail();
 }
@@ -321,6 +323,212 @@ function renderSignalList() {
     });
     $("#signalList").appendChild(button);
   });
+}
+
+function renderProgressFlow() {
+  const container = $("#phaseFlow");
+  if (!container) return;
+  const steps = state.data?.workflow?.length ? state.data.workflow : [
+    { label: "의도 파악", detail: "요청 분석 대기", progress: state.data ? 100 : 0 },
+    { label: "한국어 뉴스 수집", detail: "국내 기사 기반 데이터 확인", progress: state.data ? 100 : 0 },
+    { label: "ISQ 신호 점수화", detail: "5축 점수 산출", progress: state.data ? 100 : 0 },
+    { label: "원화 차트·예측", detail: "가격 및 단기 예측 연결", progress: state.data ? 100 : 0 },
+    { label: "리포트 준비", detail: "한글 결과 구성", progress: state.data ? 100 : 0 }
+  ];
+  const total = steps.length ? Math.round(steps.reduce((sum, step) => sum + (Number(step.progress) || 0), 0) / steps.length) : 0;
+  $("#processSummary").textContent = state.data ? `분석 완료 ${total}% · ${state.signals.length}개 신호` : "데이터 수집 전";
+  container.innerHTML = steps.map((step, index) => `
+    <div class="phase-step-card ${Number(step.progress) >= 100 ? "done" : ""}">
+      <div class="phase-index">${index + 1}</div>
+      <div>
+        <strong>${escapeHtml(step.label || `단계 ${index + 1}`)}</strong>
+        <span>${escapeHtml(step.detail || "")}</span>
+        <i><b style="width:${clamp(Number(step.progress) || 0, 0, 100)}%"></b></i>
+      </div>
+      <em>${Math.round(Number(step.progress) || 0)}%</em>
+    </div>
+  `).join("");
+}
+
+function renderVisualFeed() {
+  const container = $("#visualFeed");
+  if (!container) return;
+  const list = filteredSignals();
+  if (!list.length) {
+    container.innerHTML = `<div class="empty">시각화할 신호가 없습니다.</div>`;
+    return;
+  }
+  container.innerHTML = list.map((signal, index) => visualSignalCard(signal, index)).join("");
+}
+
+function visualSignalCard(signal, index) {
+  const mood = moodOf(signal.sentiment_score);
+  const chain = signal.transmission_chain || [];
+  const tickers = signal.impact_tickers || [];
+  const tags = signal.industry_tags || [];
+  const metrics = signalMetrics(signal);
+  const sources = signal.sources || [];
+  return `
+    <article class="visual-signal-card ${mood.className}" data-signal-id="${escapeAttr(signal.signal_id || String(index))}">
+      <div class="visual-card-top">
+        <div>
+          <div class="mini-row visual-meta">
+            <span class="pill ${mood.className}">${mood.label}</span>
+            <span class="pill">ISQ ${Math.round(metrics.quality * 100)}</span>
+            <span class="pill">${escapeHtml(signal.expected_horizon || "T+N")}</span>
+          </div>
+          <h3>${escapeHtml(koText(signal.title || "금융 신호"))}</h3>
+          <p>${escapeHtml(koText(signal.summary || "")).slice(0, 210)}${koText(signal.summary || "").length > 210 ? "..." : ""}</p>
+        </div>
+        <button type="button" class="visual-jump" onclick="window.openSignal('${escapeJs(signal.signal_id || "")}')">상세</button>
+      </div>
+      <div class="visual-card-body">
+        <div class="radar-box">
+          ${radarSvg(metrics, mood.className)}
+          <div class="radar-caption">감성 · 신뢰도 · 강도 · 예상 괴리 · 시의성</div>
+        </div>
+        <div class="metric-stack">
+          ${metricBar("감성", metrics.sentiment)}
+          ${metricBar("신뢰도", metrics.confidence)}
+          ${metricBar("강도", metrics.intensity)}
+          ${metricBar("괴리", metrics.expectationGap)}
+          ${metricBar("시의성", metrics.timeliness)}
+        </div>
+        <div class="mini-chain-map">
+          <div class="mini-chain-title">전달 그래프</div>
+          ${chainGraphSvg(chain, mood.className)}
+        </div>
+      </div>
+      <div class="visual-card-foot">
+        <div class="visual-tags">
+          ${[...tags, ...tickers.map((ticker) => koText(ticker.name || ticker.ticker || ticker.code || "종목"))].slice(0, 5).map((tag) => `<span>${escapeHtml(tag)}</span>`).join("") || "<span>영향 종목 없음</span>"}
+        </div>
+        <div class="visual-source-list">
+          ${sources.slice(0, 2).map((source) => `<a href="${escapeAttr(source.url || "#")}" target="_blank" rel="noopener noreferrer">${escapeHtml(koSourceName(source.source_name || source.source))} · ${escapeHtml(koText(source.title || ""))}</a>`).join("") || "<span>한국어 기사/시장 데이터 기반</span>"}
+        </div>
+      </div>
+    </article>
+  `;
+}
+
+function signalMetrics(signal) {
+  const sentimentRaw = Number(signal.sentiment_score) || 0;
+  const sentiment = Math.abs(sentimentRaw);
+  const confidence = Number(signal.confidence) || 0;
+  const intensity = clamp((Number(signal.intensity) || 0) / 5, 0, 1);
+  const expectationGap = Number(signal.expectation_gap ?? signal.expectationGap ?? 0.5);
+  const timeliness = Number(signal.timeliness) || 0;
+  const quality = (confidence * 0.35) + (intensity * 0.3) + (expectationGap * 0.2) + (timeliness * 0.15);
+  return {
+    sentiment: clamp(sentiment, 0, 1),
+    confidence: clamp(confidence, 0, 1),
+    intensity,
+    expectationGap: clamp(expectationGap, 0, 1),
+    timeliness: clamp(timeliness, 0, 1),
+    quality: clamp(quality, 0, 1)
+  };
+}
+
+function radarSvg(metrics, moodClass) {
+  const labels = ["감성", "신뢰", "강도", "괴리", "시의"];
+  const values = [metrics.sentiment, metrics.confidence, metrics.intensity, metrics.expectationGap, metrics.timeliness];
+  const cx = 96;
+  const cy = 90;
+  const maxR = 62;
+  const points = values.map((value, index) => radarPoint(cx, cy, maxR * value, index, values.length));
+  const rings = [0.33, 0.66, 1].map((ratio) => values.map((_, index) => radarPoint(cx, cy, maxR * ratio, index, values.length)).map((point) => point.join(",")).join(" "));
+  const axes = values.map((_, index) => radarPoint(cx, cy, maxR, index, values.length));
+  const labelNodes = axes.map((point, index) => `<text x="${point[0]}" y="${point[1] + (point[1] > cy ? 14 : -7)}" text-anchor="middle">${labels[index]}</text>`).join("");
+  const fill = moodClass === "bad" ? "#b23a2f" : moodClass === "good" ? "#0f7b5f" : "#245f87";
+  return `
+    <svg class="radar-svg" viewBox="0 0 192 182" role="img" aria-label="ISQ 레이더 차트">
+      ${rings.map((ring) => `<polygon points="${ring}" class="radar-ring"></polygon>`).join("")}
+      ${axes.map((point) => `<line x1="${cx}" y1="${cy}" x2="${point[0]}" y2="${point[1]}" class="radar-axis"></line>`).join("")}
+      <polygon points="${points.map((point) => point.join(",")).join(" ")}" fill="${fill}" class="radar-poly"></polygon>
+      ${points.map((point) => `<circle cx="${point[0]}" cy="${point[1]}" r="3.3" fill="${fill}"></circle>`).join("")}
+      ${labelNodes}
+    </svg>
+  `;
+}
+
+function radarPoint(cx, cy, radius, index, total) {
+  const angle = -Math.PI / 2 + (Math.PI * 2 * index) / total;
+  return [Number((cx + Math.cos(angle) * radius).toFixed(2)), Number((cy + Math.sin(angle) * radius).toFixed(2))];
+}
+
+function metricBar(label, value) {
+  const percent = Math.round(clamp(value, 0, 1) * 100);
+  return `
+    <div class="metric-bar">
+      <span>${escapeHtml(label)}</span>
+      <strong>${percent}</strong>
+      <i style="--value:${percent}%"></i>
+    </div>
+  `;
+}
+
+function miniChain(chain) {
+  if (!chain.length) return `<div class="empty mini-empty">체인 데이터 없음</div>`;
+  return `
+    <div class="chain-nodes">
+      ${chain.slice(0, 4).map((node, index) => `
+        <div class="chain-node">
+          <b>${index + 1}</b>
+          <span>${escapeHtml(koText(node.node_name || "단계"))}</span>
+          <small>${escapeHtml(impactLabel(node.impact_type))}</small>
+        </div>
+      `).join("")}
+    </div>
+  `;
+}
+
+function chainGraphSvg(chain, moodClass) {
+  if (!chain.length) return `<div class="empty mini-empty">체인 데이터 없음</div>`;
+  const nodes = chain.slice(0, 4);
+  const width = 360;
+  const height = 150;
+  const step = nodes.length > 1 ? (width - 70) / (nodes.length - 1) : 0;
+  const colorFor = (impact) => {
+    const text = String(impact || "");
+    if (/호재|강세|상승|利多/.test(text)) return "#17a77d";
+    if (/악재|약세|하락|利空/.test(text)) return "#d24b3f";
+    return moodClass === "bad" ? "#b85b52" : "#64748b";
+  };
+  const edges = nodes.slice(1).map((_, index) => {
+    const x1 = 34 + index * step + 26;
+    const x2 = 34 + (index + 1) * step - 26;
+    return `<path d="M${x1} 70 C${x1 + 18} 52 ${x2 - 18} 52 ${x2} 70" class="graph-edge"></path>`;
+  }).join("");
+  const nodeSvg = nodes.map((node, index) => {
+    const x = 34 + index * step;
+    const color = colorFor(node.impact_type);
+    const name = truncateLabel(koText(node.node_name || `단계 ${index + 1}`), 7);
+    const impact = truncateLabel(impactLabel(node.impact_type), 6);
+    return `
+      <g class="graph-node">
+        <circle cx="${x}" cy="70" r="${index === 0 ? 25 : 22}" fill="${color}"></circle>
+        <text x="${x}" y="74" text-anchor="middle">${index + 1}</text>
+        <text x="${x}" y="116" text-anchor="middle" class="graph-label">${escapeHtml(name)}</text>
+        <text x="${x}" y="132" text-anchor="middle" class="graph-impact">${escapeHtml(impact)}</text>
+      </g>
+    `;
+  }).join("");
+  return `
+    <svg class="chain-graph-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="투자 논리 전달 그래프">
+      <defs>
+        <marker id="graphArrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+          <path d="M0,0 L0,6 L7,3 z" fill="#8ea4b8"></path>
+        </marker>
+      </defs>
+      ${edges}
+      ${nodeSvg}
+    </svg>
+  `;
+}
+
+function truncateLabel(value, max) {
+  const text = String(value || "");
+  return text.length > max ? `${text.slice(0, max - 1)}…` : text;
 }
 
 function renderDetail() {
@@ -535,6 +743,7 @@ function escapeJs(value) {
 $("#refreshBtn").addEventListener("click", loadData);
 $("#searchInput").addEventListener("input", (event) => {
   state.query = event.target.value;
+  renderVisualFeed();
   renderSignalList();
 });
 
@@ -551,11 +760,21 @@ window.selectTicker = (ticker) => {
   renderDetail();
 };
 
+window.openSignal = (signalId) => {
+  const signal = state.signals.find((item) => String(item.signal_id || "") === String(signalId));
+  if (!signal) return;
+  state.selectedSignal = signal;
+  state.selectedTicker = firstTicker(signal);
+  render();
+  document.querySelector(".detail")?.scrollIntoView({ behavior: "smooth", block: "start" });
+};
+
 document.querySelectorAll(".filters button").forEach((button) => {
   button.addEventListener("click", () => {
     document.querySelectorAll(".filters button").forEach((item) => item.classList.remove("active"));
     button.classList.add("active");
     state.filter = button.dataset.filter;
+    renderVisualFeed();
     renderSignalList();
   });
 });

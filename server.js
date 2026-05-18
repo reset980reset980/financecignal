@@ -52,6 +52,39 @@ const STOCK_ALIASES = [
   { code: "TSLA", ticker: "TSLA", name: "테슬라", market: "US", keywords: ["tesla", "테슬라"] }
 ];
 
+const WORKFLOW_STEPS = [
+  {
+    id: "intent",
+    label: "의도 파악",
+    detail: "한국 금융시장 중심의 신호 분석 요청으로 분류",
+    progress: 100
+  },
+  {
+    id: "news",
+    label: "한국어 뉴스 수집",
+    detail: "구글 뉴스 한국 RSS와 국내 뉴스 검색 링크를 우선 사용",
+    progress: 100
+  },
+  {
+    id: "score",
+    label: "ISQ 신호 점수화",
+    detail: "감성, 신뢰도, 강도, 예상 괴리, 시의성 5축 산출",
+    progress: 100
+  },
+  {
+    id: "forecast",
+    label: "원화 차트·예측",
+    detail: "국내 종목 가격을 원화 기준으로 표시하고 단기 예측선을 생성",
+    progress: 100
+  },
+  {
+    id: "report",
+    label: "리포트 준비",
+    detail: "요약, 추론 근거, 전달 체인, 출처를 한글 리포트 구조로 정리",
+    progress: 100
+  }
+];
+
 function findStockByQuery(query) {
   const text = String(query || "").toLowerCase();
   return STOCK_ALIASES.find((stock) =>
@@ -240,6 +273,7 @@ async function getKoreaDashboard() {
     const mood = change > 2 ? 0.35 : change < -2 ? -0.35 : 0;
     const confidence = clamp(0.55 + Math.min(Math.abs(change) / 20, 0.3), 0.5, 0.85);
     const source = news.items[index % Math.max(news.items.length, 1)];
+    const expectationGap = clamp(0.34 + Math.min(Math.abs(change) / 18, 0.36) + (source ? 0.08 : 0), 0.25, 0.9);
 
     charts[stock.ticker] = {
       ticker: stock.ticker,
@@ -255,24 +289,28 @@ async function getKoreaDashboard() {
       prediction_logic: "최근 한국 주식 가격 흐름과 한국어 뉴스 흐름을 결합한 경량 모멘텀 예측입니다."
     };
 
+    const topic = `${stock.name}${topicParticle(stock.name)}`;
     signals.push({
       signal_id: `kr_${stock.code}_${Date.now()}_${index}`,
       title: `${stock.name}: 최근 1개월 ${change >= 0 ? "상승" : "하락"} 흐름과 한국 뉴스 점검`,
-      summary: `${stock.name}은 최근 1개월 기준 ${change.toFixed(2)}% 변동했습니다. 한국어 뉴스와 가격 흐름을 함께 보며 단기 모멘텀을 확인합니다.`,
+      summary: `${topic} 최근 1개월 기준 ${change.toFixed(2)}% 변동했습니다. 한국어 뉴스와 가격 흐름을 함께 보며 단기 모멘텀을 확인합니다.`,
       reasoning: `가격 데이터 ${prices.length}개와 한국어 금융 기사 흐름을 기준으로 산출했습니다. 급격한 변동은 실적, 업황, 금리, 환율 뉴스와 함께 재확인이 필요합니다.`,
       sentiment_score: Number(mood.toFixed(2)),
       confidence: Number(confidence.toFixed(2)),
       intensity: Math.max(1, Math.min(5, Math.round(Math.abs(change) / 3) + 1)),
+      expectation_gap: Number(expectationGap.toFixed(2)),
       timeliness: 0.85,
       expected_horizon: "T+5",
       price_in_status: "한국 시장 가격 기준",
+      industry_tags: stockTags(stock),
       impact_tickers: [{ ticker: stock.ticker, code: stock.code, name: stock.name, weight: 1 }],
       transmission_chain: [
         { node_name: "한국어 뉴스", impact_type: mood >= 0 ? "호재" : "악재", logic: source?.title || "한국 금융시장 주요 뉴스 흐름을 확인합니다." },
         { node_name: "가격 모멘텀", impact_type: mood >= 0 ? "중립·강세" : "중립·약세", logic: `최근 1개월 변동률 ${change.toFixed(2)}%` },
         { node_name: "관심 종목", impact_type: "중립", logic: `${stock.name}의 단기 리스크와 수급을 함께 관찰합니다.` }
       ],
-      sources: source ? [{ source_name: source.source_name, title: source.title, url: source.url }] : []
+      sources: source ? [{ source_name: source.source_name, title: source.title, url: source.url }] : [],
+      search_results: makeKoreanSearch(`${stock.name} ${stockNewsKeyword(stock)} 뉴스`).engines
     });
   });
 
@@ -281,9 +319,39 @@ async function getKoreaDashboard() {
     count: signals.length,
     locale: "ko-KR",
     base_market: "KR",
+    workflow: WORKFLOW_STEPS,
+    analyzed_sources: [
+      "Awesome Finance Skills: 뉴스·종목·감성·예측·신호추적·논리시각화·리포트 스킬",
+      "DeepEar: Intent → Trend → Fin/ISQ → Forecast/Kronos → Report 파이프라인",
+      "OpenCode 공유 데모: 스킬 실행 로그와 최종 분석 리포트 흐름"
+    ],
     signals,
     charts
   };
+}
+
+function stockTags(stock) {
+  const byCode = {
+    "005930": ["반도체", "대형주", "코스피"],
+    "000660": ["반도체", "AI 메모리", "코스피"],
+    "373220": ["2차전지", "배터리", "코스피"],
+    "005380": ["자동차", "수출", "코스피"],
+    "035420": ["플랫폼", "AI", "코스피"],
+    "035720": ["플랫폼", "콘텐츠", "코스피"]
+  };
+  return byCode[stock.code] || [stock.market === "KR" ? "국내주식" : "글로벌", stock.market];
+}
+
+function stockNewsKeyword(stock) {
+  const tags = stockTags(stock);
+  return tags[0] || "금융시장";
+}
+
+function topicParticle(value) {
+  const text = String(value || "");
+  const last = text.charCodeAt(text.length - 1);
+  if (last < 0xac00 || last > 0xd7a3) return "는";
+  return (last - 0xac00) % 28 === 0 ? "는" : "은";
 }
 
 function buildForecastFromPrices(prices, currency) {

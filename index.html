@@ -4,9 +4,12 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Finance Signal Radar</title>
-    <link rel="stylesheet" href="./styles.css?v=18" />
+    <link rel="stylesheet" href="./styles.css?v=20" />
   </head>
   <body>
+    <div class="scroll-gauge" aria-hidden="true">
+      <span id="scrollGaugeFill"></span>
+    </div>
     <header class="topbar">
       <div class="brand">
         <span class="live-dot" aria-hidden="true"></span>
@@ -215,28 +218,42 @@
           <article class="chart-panel">
             <div class="section-title">
               <div>
-                <h3 id="chartTitle">가격·예측 차트</h3>
-                <p id="chartMeta">종목을 선택하면 최근 가격과 예측선이 표시됩니다.</p>
+                <h3 id="chartTitle">일봉 가격·예측 차트</h3>
+                <p id="chartMeta">종목을 선택하면 최근 일봉 종가와 5거래일 예측선이 표시됩니다.</p>
               </div>
               <span id="predictionRange">-</span>
             </div>
             <canvas id="priceChart" width="980" height="320" aria-label="가격 예측 차트"></canvas>
           </article>
 
-          <div class="split">
-            <article class="analysis-card">
-              <h3>원 출처</h3>
-              <div id="sourceLinks" class="link-list"></div>
-            </article>
-            <article class="analysis-card">
-              <h3>한국어 기사 검색</h3>
-              <div id="searchLinks" class="link-list"></div>
-            </article>
-          </div>
+          <article class="analysis-card context-tools" aria-label="선택 종목 보조 분석">
+            <div class="section-title">
+              <div>
+                <h3>뉴스 해석과 기사 검색</h3>
+                <p>기사 제목을 누르면 뉴스 해석 입력창에 자동으로 들어갑니다. 원문은 각 기사 옆의 바로가기 버튼으로 엽니다.</p>
+              </div>
+              <span>선택 종목 기준</span>
+            </div>
+            <div class="context-tool-grid">
+              <div class="context-tool">
+                <label for="sentimentText">뉴스 해석</label>
+                <textarea id="sentimentText" rows="4" placeholder="뉴스 문장이나 기사 요약을 붙여넣으면 상승/하락 쪽 해석만 확인합니다."></textarea>
+                <button type="button" data-tool="sentiment">뉴스 해석</button>
+                <div id="sentimentOutput" class="tool-output context-output">분석할 뉴스 문장을 입력하세요.</div>
+              </div>
+              <div class="context-tool article-search-tool">
+                <div class="section-title compact">
+                  <label>한국어 기사 검색</label>
+                  <span>선택 입력</span>
+                </div>
+                <div id="searchLinks" class="article-search-list"></div>
+              </div>
+            </div>
+          </article>
         </section>
       </section>
     </main>
 
-    <script src="./app.js?v=22"></script>
+    <script src="./app.js?v=25"></script>
   </body>
 </html>

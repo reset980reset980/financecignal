@@ -103,6 +103,26 @@ function formatWon(value) {
   }).format(amount);
 }
 
+function formatCounterValue(value, format) {
+  const amount = Number(value) || 0;
+  if (format === "money") return formatWon(amount);
+  if (format === "percent") return `${Math.round(amount)}%`;
+  if (format === "signed-percent") return `${amount >= 0 ? "+" : ""}${amount.toFixed(2)}%`;
+  if (format === "decimal") return amount.toFixed(2);
+  return String(Math.round(amount).toLocaleString("ko-KR"));
+}
+
+function setCounter(selector, target, format = "integer") {
+  const element = document.querySelector(selector);
+  if (!element) return;
+  const next = Number(target) || 0;
+  element.classList.add("count-up");
+  element.dataset.countTarget = String(next);
+  element.dataset.countFormat = format;
+  element.dataset.countAnimated = "false";
+  element.textContent = formatCounterValue(0, format);
+}
+
 function pointToKrw(point, chart) {
   if (Number.isFinite(Number(point?.close_krw))) return Number(point.close_krw);
   if (chart?.currency === "KRW" || chart?.display_currency === "KRW") return Number(point?.close);
@@ -118,6 +138,17 @@ function koText(value) {
   }
   if (containsCjk(text)) return "한국어 번역 중입니다.";
   return text;
+}
+
+function displayText(value) {
+  return koText(value).replace(/\bT\+(\d+)\b/g, "$1거래일");
+}
+
+function horizonLabel(value) {
+  const text = String(value || "").trim();
+  const match = text.match(/^T\+(\d+)$/i);
+  if (match) return `${match[1]}거래일`;
+  return displayText(text || "예측 기간");
 }
 
 function containsCjk(value) {
@@ -229,7 +260,8 @@ function impactLabel(value) {
     "긍정": "상승 쪽",
     "부정": "하락 쪽",
     "positive": "상승 쪽",
-    "negative": "하락 쪽"
+    "negative": "하락 쪽",
+    "neutral": "중립"
   };
   return map[value] || value || "영향";
 }
@@ -242,6 +274,19 @@ function chainNodeLabel(value) {
     "영향 종목": "대상 종목"
   };
   return map[value] || koText(value || "단계");
+}
+
+function sentimentTone(data) {
+  const label = String(data?.label || data?.label_ko || "").toLowerCase();
+  const score = Number(data?.score || 0);
+  if (/positive|긍정|상승/.test(label) || score > 0.08) return { key: "positive", label: "상승 쪽", className: "good" };
+  if (/negative|부정|하락/.test(label) || score < -0.08) return { key: "negative", label: "하락 쪽", className: "bad" };
+  return { key: "neutral", label: "중립", className: "neutral" };
+}
+
+function shortText(value, max = 150) {
+  const text = String(value || "").trim().replace(/\s+/g, " ");
+  return text.length > max ? `${text.slice(0, max - 1)}...` : text;
 }
 
 function textCorpus(signal) {
@@ -354,6 +399,7 @@ function render() {
   renderVisualFeed();
   renderSignalList();
   renderDetail();
+  queueRevealScan();
 }
 
 function renderSummary() {
@@ -365,9 +411,9 @@ function renderSummary() {
     : 0;
 
   $("#generatedAt").textContent = formatDate(state.data?.generated_at);
-  $("#signalCount").textContent = String(state.data?.count ?? signals.length);
-  $("#avgConfidence").textContent = formatPercent(avgConfidence);
-  $("#tickerCount").textContent = String(tickers.size);
+  setCounter("#signalCount", Number(state.data?.count ?? signals.length), "integer");
+  setCounter("#avgConfidence", avgConfidence * 100, "percent");
+  setCounter("#tickerCount", tickers.size, "integer");
 }
 
 function renderSignalList() {
@@ -388,11 +434,11 @@ function renderSignalList() {
         <span class="pill ${mood.className}">${mood.label}</span>
         <span class="pill">확실성 ${formatPercent(signal.confidence)}</span>
       </div>
-      <h3>${escapeHtml(koText(signal.title || "제목 없음"))}</h3>
-      <p>${escapeHtml(koText(signal.summary || "")).slice(0, 145)}${koText(signal.summary || "").length > 145 ? "..." : ""}</p>
+      <h3>${escapeHtml(displayText(signal.title || "제목 없음"))}</h3>
+      <p>${escapeHtml(displayText(signal.summary || "")).slice(0, 145)}${displayText(signal.summary || "").length > 145 ? "..." : ""}</p>
       <div class="mini-row">
         <span class="pill">강도 ${signal.intensity ?? "-"}</span>
-        <span class="pill">${escapeHtml(signal.expected_horizon || "기간 미상")}</span>
+        <span class="pill">${escapeHtml(horizonLabel(signal.expected_horizon || "기간 미상"))}</span>
       </div>
     `;
     button.addEventListener("click", () => {
@@ -472,10 +518,10 @@ function visualSignalCard(signal, index) {
             <span class="pill">ISQ ${Math.round(metrics.quality * 100)}</span>
             ${prediction.direction ? `<span class="pill">예측 ${escapeHtml(prediction.direction)} ${Number(prediction.change_percent || 0).toFixed(2)}%</span>` : ""}
             ${predictionMarket ? `<span class="pill">예측시장 ${escapeHtml(predictionMarket.label || "")}</span>` : ""}
-            <span class="pill">${escapeHtml(signal.expected_horizon || "T+N")}</span>
+            <span class="pill">${escapeHtml(horizonLabel(signal.expected_horizon || "T+N"))}</span>
           </div>
-          <h3>${escapeHtml(koText(signal.title || "금융 신호"))}</h3>
-          <p>${escapeHtml(koText(signal.summary || "")).slice(0, 210)}${koText(signal.summary || "").length > 210 ? "..." : ""}</p>
+          <h3>${escapeHtml(displayText(signal.title || "금융 신호"))}</h3>
+          <p>${escapeHtml(displayText(signal.summary || "")).slice(0, 210)}${displayText(signal.summary || "").length > 210 ? "..." : ""}</p>
         </div>
         <button type="button" class="visual-jump" onclick="window.openSignal('${escapeJs(signal.signal_id || "")}')">상세</button>
       </div>
@@ -649,15 +695,14 @@ function renderDetail() {
     $("#chainList").innerHTML = "";
     $("#tickerHint").textContent = "없음";
     $("#tickerList").innerHTML = `<div class="empty">영향 종목 정보가 없습니다.</div>`;
-    $("#sourceLinks").innerHTML = `<div class="empty">링크 없음</div>`;
     $("#searchLinks").innerHTML = `<div class="empty">검색 결과 없음</div>`;
     renderChart();
     return;
   }
 
   const mood = moodOf(signal.sentiment_score);
-  $("#detailSource").textContent = `${signal.signal_id || "signal"} · 가격 반영: ${koText(signal.price_in_status || "가격 반영 상태 미상")}`;
-  $("#detailTitle").textContent = koText(signal.title || "제목 없음");
+  $("#detailSource").textContent = `${signal.signal_id || "signal"} · 가격 반영: ${displayText(signal.price_in_status || "가격 반영 상태 미상")}`;
+  $("#detailTitle").textContent = displayText(signal.title || "제목 없음");
   $("#detailMood").textContent = mood.label;
   $("#detailMood").className = `mood ${mood.className}`;
 
@@ -666,11 +711,10 @@ function renderDetail() {
   setMetric("intensity", Number(signal.intensity) || 0, String(signal.intensity ?? 0));
   setMetric("timeliness", Number(signal.timeliness) || 0, formatPercent(signal.timeliness));
 
-  $("#summaryText").textContent = koText(signal.summary || "-");
-  $("#reasoningText").textContent = koText(signal.reasoning || "-");
+  $("#summaryText").textContent = displayText(signal.summary || "-");
+  $("#reasoningText").textContent = displayText(signal.reasoning || "-");
   renderChain(signal);
   renderTickers(signal);
-  renderLinks("#sourceLinks", signal.sources || [], "source_name");
   renderKoreanArticleSearch(signal);
   renderChart();
 }
@@ -687,7 +731,7 @@ function renderChain(signal) {
   $("#chainList").innerHTML = chain.map((node) => `
     <li>
       <strong>${escapeHtml(chainNodeLabel(node.node_name || "단계"))} · ${escapeHtml(impactLabel(node.impact_type))}</strong>
-      <span>${escapeHtml(koText(node.logic || ""))}</span>
+      <span>${escapeHtml(displayText(node.logic || ""))}</span>
     </li>
   `).join("");
 }
@@ -708,6 +752,7 @@ function renderTickers(signal) {
 
 function renderLinks(selector, links, labelKey) {
   const container = $(selector);
+  if (!container) return;
   container.innerHTML = links.map((item) => {
     const label = koSourceName(item[labelKey] || item.source_name || item.source || "source");
     return `<a href="${escapeAttr(item.url || "#")}" target="_blank" rel="noopener noreferrer">${escapeHtml(label)} · ${escapeHtml(koText(item.title || item.url || "링크"))}</a>`;
@@ -718,15 +763,37 @@ function renderKoreanArticleSearch(signal) {
   const tickers = (signal.impact_tickers || []).map((ticker) => koText(ticker.name || ticker.code || ticker.ticker));
   const query = [koText(signal.title), ...tickers, "관련 뉴스"].filter(Boolean).join(" ");
   const encoded = encodeURIComponent(query);
+  const articles = (signal.sources || []).filter((source) => source.url || source.title).slice(0, 4);
   const links = [
     { label: "네이버 뉴스", url: `https://search.naver.com/search.naver?where=news&query=${encoded}` },
     { label: "구글 뉴스 한국", url: `https://news.google.com/search?q=${encoded}&hl=ko&gl=KR&ceid=KR:ko` },
     { label: "다음 뉴스", url: `https://search.daum.net/search?w=news&q=${encoded}` },
     { label: "빙 뉴스 한국어", url: `https://www.bing.com/news/search?q=${encoded}&setlang=ko-KR` }
   ];
-  $("#searchLinks").innerHTML = links.map((link) => `
-    <a href="${escapeAttr(link.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(link.label)} · ${escapeHtml(query)}</a>
+  const articleRows = articles.map((article, index) => {
+    const title = displayText(article.title || article.url || "기사");
+    const meta = koSourceName(article.source_name || article.source || "한국어 기사");
+    return `
+      <div class="article-search-row">
+        <button type="button" class="news-select" data-source-index="${index}">
+          <strong>${escapeHtml(title)}</strong>
+          <span>${escapeHtml(meta)}</span>
+        </button>
+        <a class="mini-open" href="${escapeAttr(article.url || "#")}" target="_blank" rel="noopener noreferrer">바로가기</a>
+      </div>
+    `;
+  }).join("");
+  const searchRows = links.map((link) => `
+    <div class="article-search-row muted">
+      <button type="button" class="news-select" data-search-query="${escapeAttr(`${link.label} · ${query}`)}">
+        <strong>${escapeHtml(link.label)}</strong>
+        <span>${escapeHtml(query)}</span>
+      </button>
+      <a class="mini-open" href="${escapeAttr(link.url)}" target="_blank" rel="noopener noreferrer">바로가기</a>
+    </div>
   `).join("");
+  $("#searchLinks").dataset.sources = JSON.stringify(articles);
+  $("#searchLinks").innerHTML = articleRows || searchRows;
 }
 
 function renderChart() {
@@ -736,17 +803,17 @@ function renderChart() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
   if (!state.selectedTicker) {
-    $("#chartTitle").textContent = "가격·예측 차트";
-    $("#chartMeta").textContent = "종목을 입력하거나 아래 카드에서 종목을 선택하면 차트가 표시됩니다.";
+    $("#chartTitle").textContent = "일봉 가격·예측 차트";
+    $("#chartMeta").textContent = "종목을 입력하거나 아래 카드에서 종목을 선택하면 최근 일봉 종가와 5거래일 예측선이 표시됩니다.";
     $("#predictionRange").textContent = "-";
     drawEmpty(ctx, canvas, "종목 선택 전");
     return;
   }
 
   if (!chart) {
-    $("#chartTitle").textContent = "가격·예측 차트";
+    $("#chartTitle").textContent = "일봉 가격·예측 차트";
     const error = state.chartErrors[state.selectedTicker];
-    $("#chartMeta").textContent = error || "선택 종목의 실제 가격·예측 데이터를 불러오는 중입니다.";
+    $("#chartMeta").textContent = error || "선택 종목의 일봉 가격·예측 데이터를 불러오는 중입니다.";
     $("#predictionRange").textContent = "-";
     drawEmpty(ctx, canvas, error ? "차트 로딩 실패" : "차트 로딩 중");
     ensureChartForSelectedTicker();
@@ -755,7 +822,7 @@ function renderChart() {
 
   const lastClose = pointToKrw(chart.prices?.at(-1), chart);
   $("#chartTitle").textContent = `${koText(chart.name || chart.ticker)} (${chart.ticker})`;
-  $("#chartMeta").textContent = `최근 ${chart.prices?.length || 0}개 가격 + ${chart.forecast?.length || 0}개 예측 · 최근 종가 ${formatWon(lastClose)} · 기준 통화 원화`;
+  $("#chartMeta").textContent = `최근 ${chart.prices?.length || 0}개 일봉 종가 + ${chart.forecast?.length || 0}거래일 예측 종가 · 최근 일봉 종가 ${formatWon(lastClose)} · 기준 통화 원화`;
   $("#predictionRange").textContent = `목표 ${chart.prediction?.target_low ?? "-"}% ~ ${chart.prediction?.target_high ?? "-"}%`;
 
   const historical = (chart.prices || []).map((point) => ({ ...point, type: "price" }));
@@ -793,7 +860,7 @@ function renderChart() {
   ctx.font = "22px Georgia";
   ctx.fillText(`${koText(chart.name || chart.ticker)}`, left, 22);
   ctx.font = "12px sans-serif";
-  ctx.fillText("실선: 최근 종가 / 점선: 예측 종가 / 가격 단위: 원화 환산", left, canvas.height - 14);
+  ctx.fillText("실선: 최근 일봉 종가 / 점선: 5거래일 예측 종가 / 가격 단위: 원화 환산", left, canvas.height - 14);
 }
 
 function ensureChartForSelectedTicker() {
@@ -901,6 +968,28 @@ $("#tickerList").addEventListener("click", (event) => {
   renderDetail();
 });
 
+$("#searchLinks")?.addEventListener("click", (event) => {
+  const button = event.target.closest(".news-select");
+  if (!button) return;
+  const sourceIndex = button.dataset.sourceIndex;
+  let text = "";
+  if (sourceIndex !== undefined) {
+    try {
+      const sources = JSON.parse($("#searchLinks").dataset.sources || "[]");
+      const article = sources[Number(sourceIndex)];
+      state.selectedArticle = article || null;
+      text = articleInputText(article);
+    } catch {
+      text = "";
+    }
+  } else {
+    state.selectedArticle = null;
+    text = `[검색 키워드]\n${button.dataset.searchQuery || button.innerText}`;
+  }
+  setHybridTextarea("#sentimentText", text || button.innerText);
+  setOutput("#sentimentOutput", "선택한 뉴스가 입력됐습니다. 뉴스 해석 버튼을 누르면 상승/하락 쪽 해석을 확인합니다.");
+});
+
 window.selectTicker = (ticker) => {
   if (!ticker) return;
   state.selectedTicker = ticker;
@@ -918,6 +1007,80 @@ window.openSignal = (signalId) => {
   document.querySelector(".detail")?.scrollIntoView({ behavior: "smooth", block: "start" });
 };
 
+let revealObserver = null;
+
+function initRevealObserver() {
+  updateScrollGauge();
+  window.addEventListener("scroll", updateScrollGauge, { passive: true });
+  window.addEventListener("resize", updateScrollGauge);
+  if (!("IntersectionObserver" in window)) return;
+  revealObserver = new IntersectionObserver((entries) => {
+    entries.forEach((entry) => {
+      if (!entry.isIntersecting) return;
+      entry.target.classList.add("is-visible");
+      runCounters(entry.target);
+      revealObserver.unobserve(entry.target);
+    });
+  }, { rootMargin: "0px 0px -8% 0px", threshold: 0.08 });
+  queueRevealScan();
+}
+
+function queueRevealScan() {
+  window.requestAnimationFrame(() => {
+    const elements = document.querySelectorAll(".market-strip article, .process-panel, .visual-feed-panel, .skill-console, .feed, .detail, .analysis-card, .chart-panel, .signal-card, .visual-signal-card, .prediction-summary div, .count-up");
+    elements.forEach((element, index) => {
+      if (element.dataset.revealReady === "true") {
+        if (isElementInViewport(element)) runCounters(element);
+        return;
+      }
+      element.dataset.revealReady = "true";
+      element.style.setProperty("--reveal-delay", `${Math.min((index % 7) * 70, 420)}ms`);
+      element.classList.add("reveal-on-scroll");
+      if (revealObserver) revealObserver.observe(element);
+      else {
+        element.classList.add("is-visible");
+        runCounters(element);
+      }
+    });
+  });
+}
+
+function isElementInViewport(element) {
+  const rect = element.getBoundingClientRect();
+  return rect.top < window.innerHeight && rect.bottom > 0;
+}
+
+function updateScrollGauge() {
+  const fill = document.querySelector("#scrollGaugeFill");
+  if (!fill) return;
+  const max = Math.max(document.documentElement.scrollHeight - window.innerHeight, 1);
+  const progress = clamp(window.scrollY / max, 0, 1);
+  fill.style.transform = `scaleX(${progress})`;
+}
+
+function runCounters(root) {
+  const counters = root.matches?.(".count-up") ? [root] : Array.from(root.querySelectorAll?.(".count-up") || []);
+  counters.forEach(animateCounter);
+}
+
+function animateCounter(element) {
+  if (!element || element.dataset.countAnimated === "true") return;
+  const target = Number(element.dataset.countTarget);
+  if (!Number.isFinite(target)) return;
+  const format = element.dataset.countFormat || "integer";
+  const start = performance.now();
+  const duration = 950;
+  element.dataset.countAnimated = "true";
+  const tick = (now) => {
+    const progress = clamp((now - start) / duration, 0, 1);
+    const eased = 1 - Math.pow(1 - progress, 3);
+    element.textContent = formatCounterValue(target * eased, format);
+    if (progress < 1) requestAnimationFrame(tick);
+    else element.textContent = formatCounterValue(target, format);
+  };
+  requestAnimationFrame(tick);
+}
+
 document.querySelectorAll(".filters button").forEach((button) => {
   button.addEventListener("click", () => {
     document.querySelectorAll(".filters button").forEach((item) => item.classList.remove("active"));
@@ -929,6 +1092,7 @@ document.querySelectorAll(".filters button").forEach((button) => {
   });
 });
 
+initRevealObserver();
 loadData();
 
 async function apiGet(path) {
@@ -949,7 +1113,9 @@ async function apiPost(path, body) {
 
 function setOutput(selector, html) {
   const element = document.querySelector(selector);
-  if (element) element.innerHTML = html;
+  if (!element) return;
+  element.innerHTML = html;
+  queueRevealScan();
 }
 
 function linkList(items) {
@@ -1032,6 +1198,12 @@ function formatMarketValue(value, currency) {
   return `${amount.toLocaleString("ko-KR", { maximumFractionDigits: 2 })} ${currency || ""}`.trim();
 }
 
+function counterHtml(value, format, fallback = "-") {
+  const amount = Number(value);
+  if (!Number.isFinite(amount)) return `<strong>${escapeHtml(fallback)}</strong>`;
+  return `<strong class="count-up" data-count-target="${escapeAttr(String(amount))}" data-count-format="${escapeAttr(format)}">${escapeHtml(formatCounterValue(0, format))}</strong>`;
+}
+
 function renderMarketPredictionResult(found, data, linkedSignal) {
   const candidates = (found.results || []).slice(0, 6).map((stock, index) => `
     <span class="pill ${index === 0 ? "strong" : ""}">
@@ -1042,18 +1214,20 @@ function renderMarketPredictionResult(found, data, linkedSignal) {
   const forecast = data.forecast || [];
   const lastForecast = forecast.at(-1);
   const currency = data.display_currency || data.currency || "";
-  const latestText = latest?.close_krw ? formatWon(latest.close_krw) : formatMarketValue(latest?.close, currency);
-  const targetText = lastForecast?.close_krw ? formatWon(lastForecast.close_krw) : formatMarketValue(lastForecast?.close, currency);
+  const latestValue = latest?.close_krw ?? (currency === "KRW" ? latest?.close : null);
+  const targetValue = lastForecast?.close_krw ?? (currency === "KRW" ? lastForecast?.close : null);
+  const latestText = formatMarketValue(latestValue ?? latest?.close, currency);
+  const targetText = formatMarketValue(targetValue ?? lastForecast?.close, currency);
   const change = Number(data.forecast_change_percent || 0);
   return `
     <strong>${escapeHtml(data.name)} (${escapeHtml(data.ticker)})</strong>
     <div class="prediction-summary">
-      <div><span>최근 종가</span><strong>${escapeHtml(latestText)}</strong></div>
-      <div><span>${escapeHtml(data.expected_horizon || "T+5")} 예상</span><strong>${escapeHtml(targetText)}</strong></div>
-      <div><span>예측 변화율</span><strong>${change >= 0 ? "+" : ""}${change.toFixed(2)}%</strong></div>
-      <div><span>예측 확실성</span><strong>${Number(data.confidence || 0)}%</strong></div>
+      <div><span>최근 일봉 종가</span>${counterHtml(latestValue, "money", latestText)}</div>
+      <div><span>${escapeHtml(horizonLabel(data.expected_horizon || "T+5"))} 예상</span>${counterHtml(targetValue, "money", targetText)}</div>
+      <div><span>예측 변화율</span>${counterHtml(change, "signed-percent", `${change >= 0 ? "+" : ""}${change.toFixed(2)}%`)}</div>
+      <div><span>예측 확실성</span>${counterHtml(Number(data.confidence || 0), "percent", `${Number(data.confidence || 0)}%`)}</div>
     </div>
-    <div class="tool-notice good">차트와 신호 상세가 아래 패널에 반영됐습니다.${linkedSignal ? ` 선택 신호: ${escapeHtml(koText(linkedSignal.title || data.name))}` : ""}</div>
+    <div class="tool-notice good">일봉 종가 기준 차트와 신호 상세가 아래 패널에 반영됐습니다.${linkedSignal ? ` 선택 신호: ${escapeHtml(displayText(linkedSignal.title || data.name))}` : ""}</div>
     ${candidates ? `<div class="candidate-list"><small>검색 후보</small><div>${candidates}</div></div>` : ""}
   `;
 }
@@ -1062,10 +1236,8 @@ function selectedPredictionQuery() {
   const signal = state.selectedSignal;
   if (!signal) return "금융 경제 주식 비트코인 금리";
   const ticker = firstTickerInfo(signal);
-  const prediction = signal.prediction_summary || {};
   const stock = koText(ticker?.name || ticker?.ticker || ticker?.code || "");
-  const horizon = signal.expected_horizon === "예측시장" ? "" : signal.expected_horizon;
-  return [...new Set([stock, prediction.direction, horizon, "주가 예측시장"].filter(Boolean))].join(" ");
+  return [...new Set([stock, "주식 예측시장"].filter(Boolean))].join(" ");
 }
 
 function formatMarketPrice(market) {
@@ -1097,7 +1269,19 @@ function renderPredictionMarkets(data) {
       </a>
     `;
   }).join("");
-  return `${notice}<div class="prediction-market-list">${cards || "직접 연동 가능한 예측시장 결과가 없습니다. 검색 링크나 범용 시장은 시각화 분석에 사용하지 않습니다."}</div>`;
+  if (cards) return `${notice}<div class="prediction-market-list">${cards}</div>`;
+  const links = data.search_links || [];
+  const alternatives = links.map((link) => `
+    <a class="prediction-market-card muted" href="${escapeAttr(link.url || "#")}" target="_blank" rel="noopener noreferrer">
+      <strong>${escapeHtml(link.question_ko || link.question || "대안 검색")}</strong>
+      <span>${escapeHtml(link.event_title_ko || link.event_title || "예측시장 직접 검색")}</span>
+    </a>
+  `).join("");
+  return `
+    ${notice}
+    <div class="tool-notice good">대안: 종목 직접 예측시장이 없어서 예측시장 검색 링크만 제공합니다. 이 결과는 신호 시각화에 자동 반영하지 않습니다.</div>
+    <div class="prediction-market-list">${alternatives || "대안 검색 링크를 만들 수 없습니다."}</div>
+  `;
 }
 
 function summarizePredictionMarket(data) {
@@ -1253,8 +1437,8 @@ function applyPredictionToSignal(data) {
     signal = {
       signal_id: `predict_${tickerCode}`,
       title: `${data.name}: 시장 예측 ${direction}`,
-      summary: `${data.name}의 실제 가격 데이터로 ${data.expected_horizon || "T+5"} 예측을 갱신했습니다. 예측 변화율은 ${prediction.change_percent.toFixed(2)}%입니다.`,
-      reasoning: `시장 예측 도구 실행 결과를 신호 시각화에 반영했습니다. 방식: ${data.method}, 예측 신뢰도: ${data.confidence}%`,
+      summary: `${data.name}의 실제 일봉 종가 데이터로 ${horizonLabel(data.expected_horizon || "T+5")} 예측을 갱신했습니다. 예측 변화율은 ${prediction.change_percent.toFixed(2)}%입니다.`,
+      reasoning: `시장 예측 도구 실행 결과를 신호 시각화에 반영했습니다. 방식: ${data.method}, 예측 확실성: ${data.confidence}%`,
       sentiment_score: clamp(prediction.change_percent / 10, -1, 1),
       confidence: clamp(Number(data.confidence || 0) / 100, 0, 1),
       intensity: Math.max(1, Math.min(5, Math.ceil(Math.abs(prediction.change_percent) / 2))),
@@ -1289,7 +1473,7 @@ function mergePredictionChain(signal, data, direction) {
   const node = {
     node_name: "시장 예측",
     impact_type: direction === "상승" ? "상승" : direction === "하락" ? "하락" : "중립",
-    logic: `${data.name} ${data.expected_horizon || "T+5"} 예측 ${Number(data.forecast_change_percent || 0).toFixed(2)}%, 신뢰도 ${data.confidence}%`
+    logic: `${data.name} ${horizonLabel(data.expected_horizon || "T+5")} 예측 ${Number(data.forecast_change_percent || 0).toFixed(2)}%, 예측 확실성 ${data.confidence}%`
   };
   const index = chain.findIndex((item) => /시장 예측|가격·예측|예측/.test(String(item.node_name || "")));
   if (index >= 0) chain[index] = node;
@@ -1342,12 +1526,17 @@ async function runTool(tool) {
     }
     if (tool === "sentiment") {
       const text = document.querySelector("#sentimentText").value || articleInputText(state.selectedArticle) || state.selectedSignal?.summary || "";
+      if (!text.trim()) {
+        setOutput("#sentimentOutput", "뉴스 문장이나 기사 요약을 입력하세요.");
+        return;
+      }
       const data = await apiPost("/api/sentiment/analyze", { text });
+      const tone = sentimentTone(data);
       const matched = [
-        data.matched_positive?.length ? `긍정: ${data.matched_positive.join(", ")}` : "",
-        data.matched_negative?.length ? `부정: ${data.matched_negative.join(", ")}` : ""
+        data.matched_positive?.length ? `상승 쪽 키워드: ${data.matched_positive.join(", ")}` : "",
+        data.matched_negative?.length ? `하락 쪽 키워드: ${data.matched_negative.join(", ")}` : ""
       ].filter(Boolean).map(escapeHtml).join("<br>");
-      setOutput("#sentimentOutput", `<strong>${escapeHtml(data.label_ko || koText(data.label))}</strong><br>감성 점수 ${data.score_percent ?? Math.round(Number(data.score || 0) * 100)} / 100<br>${escapeHtml(data.reason)}${matched ? `<br>${matched}` : ""}`);
+      setOutput("#sentimentOutput", `<strong class="inline-mood ${tone.className}">뉴스 해석: ${escapeHtml(tone.label)}</strong><br>${escapeHtml(data.reason || "입력 문장을 기준으로 방향성을 해석했습니다.")}${matched ? `<br>${matched}` : ""}`);
     }
     if (tool === "predict") {
       const rawTicker = document.querySelector("#predictTicker").value || state.selectedTicker || "005930.KS";
@@ -1369,15 +1558,28 @@ async function runTool(tool) {
       setOutput("#predictOutput", renderMarketPredictionResult(found, data, linkedSignal));
     }
     if (tool === "track") {
-      const newInfo = document.querySelector("#trackText").value || articleInputText(state.selectedArticle) || "새 정보 없음";
-      const data = await apiPost("/api/signal/track", { signal: state.selectedSignal, newInfo });
-      if (state.selectedSignal) state.selectedSignal.confidence = data.nextConfidence;
-      const matched = [
-        data.evidence?.matched_positive?.length ? `강화 근거 키워드: ${data.evidence.matched_positive.join(", ")}` : "",
-        data.evidence?.matched_negative?.length ? `약화 근거 키워드: ${data.evidence.matched_negative.join(", ")}` : ""
-      ].filter(Boolean).map(escapeHtml).join("<br>");
-      const rationale = (data.rationale || []).map((line) => `<div>${escapeHtml(line)}</div>`).join("");
-      setOutput("#trackOutput", `<strong>${escapeHtml(data.status)} · ${escapeHtml(data.directionAlignment || "방향 유지")}</strong><br>신뢰도 ${Math.round(data.oldConfidence * 100)}% → ${Math.round(data.nextConfidence * 100)}% (${Number(data.confidenceDelta || 0) >= 0 ? "+" : ""}${Math.round(Number(data.confidenceDelta || 0) * 100)}%p)<br>기존 방향 ${Math.round(Number(data.baseSentiment || 0) * 100)} / 새 근거 ${Math.round(Number(data.newEvidenceScore || 0) * 100)}<br>${rationale}${matched ? `<br>${matched}` : ""}`);
+      if (!state.selectedSignal) {
+        setOutput("#trackOutput", "먼저 시장 예측을 만들거나 아래 신호 카드를 선택하세요.");
+        return;
+      }
+      const newInfo = document.querySelector("#trackText").value || articleInputText(state.selectedArticle) || "";
+      if (!newInfo.trim()) {
+        setOutput("#trackOutput", "판단 흐름에 추가할 새 기사, 공시, 가격 근거를 입력하세요.");
+        return;
+      }
+      const data = await apiPost("/api/sentiment/analyze", { text: newInfo });
+      const tone = sentimentTone(data);
+      const chain = Array.isArray(state.selectedSignal.transmission_chain) ? [...state.selectedSignal.transmission_chain] : [];
+      const node = {
+        node_name: "새 근거",
+        impact_type: tone.key,
+        logic: shortText(newInfo, 150)
+      };
+      const index = chain.findIndex((item) => String(item.node_name || "") === "새 근거");
+      if (index >= 0) chain[index] = node;
+      else chain.push(node);
+      state.selectedSignal.transmission_chain = chain;
+      setOutput("#trackOutput", `<strong class="inline-mood ${tone.className}">판단 흐름에 새 근거를 추가했습니다: ${escapeHtml(tone.label)}</strong><br>예측 확실성은 자동 변경하지 않았습니다.<br>${escapeHtml(data.reason || "새 근거를 선택 종목의 판단 흐름에만 반영했습니다.")}`);
       renderVisualFeed();
       renderDetail();
     }

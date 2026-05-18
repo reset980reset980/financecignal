@@ -904,9 +904,9 @@ function strictPolymarketTerms(query, matchedStock = findStockByQuery(query)) {
 }
 
 async function resolvePredictionMarketStock(query) {
-  const direct = await resolveStockByQuery(query);
-  if (direct) return direct;
-  const generic = new Set(["예측", "예측시장", "시장", "주식", "주가", "상승", "하락", "횡보", "검색", "시작", "조회", "forecast", "market", "stock", "stocks"]);
+  const exactLocal = findStockByQuery(query, { loose: false });
+  if (exactLocal) return exactLocal;
+  const generic = new Set(["예측", "예측시장", "시장", "주식", "주가", "상승", "하락", "횡보", "검색", "시작", "조회", "forecast", "market", "stock", "stocks", "t", "t+5"]);
   const terms = String(query || "")
     .split(/[^\p{L}\p{N}.]+/u)
     .map((term) => term.trim())
@@ -915,6 +915,11 @@ async function resolvePredictionMarketStock(query) {
   for (const term of terms) {
     const found = await resolveStockByQuery(term);
     if (found) return found;
+  }
+  const compactQuery = normalizeStockQuery(query);
+  if (compactQuery && compactQuery.length <= 18 && !/\s/.test(String(query || "").trim())) {
+    const direct = await resolveStockByQuery(query);
+    if (direct) return direct;
   }
   return null;
 }

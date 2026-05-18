@@ -13,6 +13,7 @@
 | **시장 예측** | 종목명 하나로 종목 검색, 가격 조회, 5거래일 예측, 일봉 차트를 통합 실행 |
 | **신호별 시각화 분석** | 선택 종목의 예측 요약, 판단 흐름, 영향 종목, 차트를 한 화면에 표시 |
 | **뉴스 해석과 기사 검색** | 한국어 기사 검색 결과를 선택하면 원문 본문을 추출해 뉴스 해석 입력창에 자동 반영 |
+| **Codex AI 분석** | Codex CLI를 호출해 선택 기사와 종목 신호의 맥락, 핵심 근거, 리스크, 확인 지표를 LLM으로 정리 |
 | **고급 분석** | 뉴스 해석, 예측시장 조회, 리포트 생성을 접이식 보조 분석 영역에서 실행 |
 | **스크롤 리빌 UI** | 섹션 진입 시 페이드인·슬라이드업, 수치 카운트업, 상단 진행 게이지 제공 |
 
@@ -28,6 +29,28 @@
 4. 본문을 충분히 가져오지 못한 경우에는 `[제목 기준]`과 실패 사유를 표시해 임시 상태로 남지 않게 합니다.
 
 예: Google News 링크로 들어온 `"낸드 가격 45% 폭등" SK하이닉스...` 기사도 실제 리드경제 원문 URL과 본문 요약으로 변환됩니다.
+
+---
+
+## Codex CLI 연동
+
+뉴스 해석 영역의 **Codex AI 분석** 버튼은 서버에서 Codex CLI를 비대화형으로 실행합니다.
+
+사용 명령 형태:
+
+```bash
+codex exec --ephemeral --sandbox read-only -c 'approval_policy="never"' -m "$CODEX_MODEL" -C "$PROJECT_DIR" -o "$TMP_OUTPUT" -
+```
+
+환경변수:
+
+| 변수 | 기본값 | 설명 |
+|------|--------|------|
+| `CODEX_COMMAND` | `codex` | 실행할 Codex CLI 바이너리 |
+| `CODEX_MODEL` | `gpt-5.4-mini` | Codex CLI 분석에 사용할 모델 |
+| `CODEX_TIMEOUT_MS` | `90000` | 분석 타임아웃 |
+
+서버는 쉘 문자열을 조합하지 않고 `child_process.spawn()` 인자 배열로 실행합니다. Codex 실패 시에는 기존 키워드 기반 해석을 대체 결과로 표시합니다.
 
 ---
 
@@ -89,6 +112,7 @@ pm2 start server.js --name finance-dashboard
 | GET | `/api/predict?ticker=삼성전자&days=5` | 단기 예측 |
 | POST | `/api/article/extract` | Google News 또는 원문 기사 URL에서 본문 요약 추출 |
 | POST | `/api/sentiment/analyze` | 감성 분석 |
+| POST | `/api/codex/analyze` | Codex CLI 기반 기사·종목 AI 분석 |
 | POST | `/api/visualize/chain` | 논리체인 SVG 시각화 |
 | POST | `/api/report/generate` | 리포트 생성 |
 

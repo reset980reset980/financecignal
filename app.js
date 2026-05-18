@@ -288,6 +288,13 @@ function sentimentTone(data) {
   return { key: "neutral", label: "중립", className: "neutral" };
 }
 
+function codexTone(data) {
+  const direction = String(data?.direction || "").trim();
+  if (/상승/.test(direction)) return { label: "상승 쪽", className: "good" };
+  if (/하락/.test(direction)) return { label: "하락 쪽", className: "bad" };
+  return { label: "중립", className: "neutral" };
+}
+
 function shortText(value, max = 150) {
   const text = String(value || "").trim().replace(/\s+/g, " ");
   return text.length > max ? `${text.slice(0, max - 1)}...` : text;
@@ -1340,6 +1347,25 @@ function renderMarketPredictionResult(found, data, linkedSignal) {
   `;
 }
 
+function renderCodexAnalysis(data) {
+  const tone = codexTone(data);
+  const list = (items) => (items || []).map((item) => `<li>${escapeHtml(item)}</li>`).join("");
+  return `
+    <div class="codex-result">
+      <div class="codex-result-head">
+        <strong class="inline-mood ${tone.className}">Codex AI 분석: ${escapeHtml(tone.label)}</strong>
+        <span>${escapeHtml(String(Math.round(Number(data.confidence || 0))))}%</span>
+      </div>
+      <p>${escapeHtml(data.summary || "요약이 없습니다.")}</p>
+      ${data.key_points?.length ? `<h4>핵심 근거</h4><ul>${list(data.key_points)}</ul>` : ""}
+      ${data.risks?.length ? `<h4>리스크</h4><ul>${list(data.risks)}</ul>` : ""}
+      ${data.watch_items?.length ? `<h4>확인할 것</h4><ul>${list(data.watch_items)}</ul>` : ""}
+      <small>${escapeHtml(data.disclaimer || "본 결과는 분석 보조이며 투자 조언이 아닙니다.")}</small>
+      ${data.ok ? "" : `<div class="tool-notice">${escapeHtml("Codex CLI 응답 실패로 대체 해석을 표시했습니다.")}</div>`}
+    </div>
+  `;
+}
+
 function selectedPredictionQuery() {
   const signal = state.selectedSignal;
   if (!signal) return "금융 경제 주식 비트코인 금리";
@@ -1646,6 +1672,20 @@ async function runTool(tool) {
       ].filter(Boolean).map(escapeHtml).join("<br>");
       setOutput("#sentimentOutput", `<strong class="inline-mood ${tone.className}">뉴스 해석: ${escapeHtml(tone.label)}</strong><br>${escapeHtml(data.reason || "입력 문장을 기준으로 방향성을 해석했습니다.")}${matched ? `<br>${matched}` : ""}`);
     }
+    if (tool === "codex") {
+      const text = document.querySelector("#sentimentText").value || articleInputText(state.selectedArticle) || state.selectedSignal?.summary || "";
+      if (!text.trim() && !state.selectedSignal) {
+        setOutput("#sentimentOutput", "Codex AI 분석에 사용할 기사나 선택 종목 정보가 없습니다.");
+        return;
+      }
+      setOutput("#sentimentOutput", "Codex CLI로 기사 맥락과 선택 종목 신호를 분석하는 중입니다. 보통 20~90초 정도 걸립니다.");
+      const data = await apiPost("/api/codex/analyze", {
+        text,
+        article: state.selectedArticle || {},
+        signal: state.selectedSignal || {}
+      });
+      setOutput("#sentimentOutput", renderCodexAnalysis(data));
+    }
     if (tool === "predict") {
       const rawTicker = document.querySelector("#predictTicker").value || state.selectedTicker || "005930.KS";
       setOutput("#predictOutput", "종목을 찾고 예측 차트를 생성하는 중입니다.");
@@ -1706,6 +1746,7 @@ async function runTool(tool) {
       search: "#searchOutput",
       stock: "#stockOutput",
       sentiment: "#sentimentOutput",
+      codex: "#sentimentOutput",
       predict: "#predictOutput",
       track: "#trackOutput",
       visualize: "#visualOutput",

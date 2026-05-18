@@ -1325,9 +1325,61 @@ meter {
   min-height: 42px;
 }
 
+.context-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.context-actions button {
+  justify-self: auto;
+}
+
+.secondary-action {
+  border-color: rgba(23, 33, 28, 0.16);
+  background: #e9e1d1;
+  color: var(--ink);
+}
+
 .context-output {
   max-height: 160px;
   margin-top: 0;
+}
+
+.codex-result {
+  display: grid;
+  gap: 10px;
+}
+
+.codex-result-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.codex-result-head span {
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: #fff7df;
+  font-weight: 900;
+}
+
+.codex-result h4 {
+  margin: 2px 0 -4px;
+  font-size: 12px;
+}
+
+.codex-result ul {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding-left: 18px;
+}
+
+.codex-result small {
+  color: var(--muted);
+  font-weight: 800;
 }
 
 .article-search-tool {

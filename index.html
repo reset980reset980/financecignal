@@ -238,7 +238,10 @@
               <div class="context-tool">
                 <label for="sentimentText">뉴스 해석</label>
                 <textarea id="sentimentText" rows="4" placeholder="뉴스 문장이나 기사 요약을 붙여넣으면 상승/하락 쪽 해석만 확인합니다."></textarea>
-                <button type="button" data-tool="sentiment">뉴스 해석</button>
+                <div class="context-actions">
+                  <button type="button" data-tool="sentiment">뉴스 해석</button>
+                  <button type="button" class="secondary-action" data-tool="codex">Codex AI 분석</button>
+                </div>
                 <div id="sentimentOutput" class="tool-output context-output">분석할 뉴스 문장을 입력하세요.</div>
               </div>
               <div class="context-tool article-search-tool">
@@ -254,6 +257,6 @@
       </section>
     </main>
 
-    <script src="./app.js?v=28"></script>
+    <script src="./app.js?v=29"></script>
   </body>
 </html>

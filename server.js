@@ -1,6 +1,8 @@
 import http from "node:http";
-import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { spawn } from "node:child_process";
+import { readFile, writeFile, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { existsSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -10,6 +12,9 @@ const PORT = Number(process.env.PORT || 3245);
 const CNY_TO_KRW = 218.59;
 const DATA_DIR = path.join(__dirname, "data");
 const SIGNAL_STORE = path.join(DATA_DIR, "signals.json");
+const CODEX_COMMAND = process.env.CODEX_COMMAND || "codex";
+const CODEX_MODEL = process.env.CODEX_MODEL || "gpt-5.4-mini";
+const CODEX_TIMEOUT_MS = Number(process.env.CODEX_TIMEOUT_MS || 90000);
 const KRX_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 const KRX_LISTING_BASE = "https://raw.githubusercontent.com/FinanceData/fdr_krx_data_cache/refs/heads/master/data/listing/krx";
 const KRX_HEADERS = {
@@ -171,6 +176,11 @@ async function routeApi(req, res, url) {
   if (req.method === "POST" && url.pathname === "/api/sentiment/analyze") {
     const body = await readBody(req);
     sendJson(res, 200, analyzeSentiment(body.text || ""));
+    return;
+  }
+  if (req.method === "POST" && url.pathname === "/api/codex/analyze") {
+    const body = await readBody(req);
+    sendJson(res, 200, await analyzeWithCodex(body));
     return;
   }
   if (req.method === "GET" && url.pathname === "/api/predict") {
@@ -1582,6 +1592,205 @@ function analyzeSentiment(text) {
     analyzed_length: haystack.length,
     reason: `분석 텍스트 ${haystack.length.toLocaleString("ko-KR")}자에서 긍정 키워드 ${pos}개, 부정 키워드 ${neg}개를 감지했습니다.`
   };
+}
+
+async function analyzeWithCodex(body) {
+  const text = trimForPrompt(body.text || "", 4200);
+  const signal = compactSignalForPrompt(body.signal || {});
+  const selectedArticle = compactArticleForPrompt(body.article || {});
+  if (!text && !signal.title && !selectedArticle.title) {
+    return {
+      ok: false,
+      summary: "Codex AI 분석에 사용할 기사나 선택 종목 정보가 없습니다.",
+      direction: "중립",
+      confidence: 0,
+      key_points: [],
+      risks: ["뉴스 해석 입력창에 기사 본문 요약을 넣거나 종목을 먼저 선택하세요."],
+      watch_items: [],
+      disclaimer: "본 결과는 공개 데이터 기반 분석 보조이며 투자 조언이 아닙니다."
+    };
+  }
+
+  const startedAt = Date.now();
+  try {
+    const raw = await runCodexExec(buildCodexMarketPrompt({ text, signal, selectedArticle }));
+    const parsed = parseCodexAnalysis(raw);
+    return {
+      ok: true,
+      provider: "codex-cli",
+      model: CODEX_MODEL,
+      duration_ms: Date.now() - startedAt,
+      ...parsed,
+      disclaimer: parsed.disclaimer || "본 결과는 공개 데이터 기반 분석 보조이며 투자 조언이 아닙니다."
+    };
+  } catch (error) {
+    const local = analyzeSentiment([text, signal.summary, signal.reasoning].filter(Boolean).join("\n"));
+    return {
+      ok: false,
+      provider: "codex-cli",
+      model: CODEX_MODEL,
+      duration_ms: Date.now() - startedAt,
+      summary: "Codex CLI 분석을 완료하지 못해 키워드 기반 1차 해석만 표시합니다.",
+      direction: local.label_ko,
+      confidence: Math.min(70, Math.max(30, Math.round(Math.abs(local.score) * 100))),
+      key_points: [local.reason],
+      risks: [`Codex CLI 오류: ${error.message}`],
+      watch_items: ["Codex CLI 로그인 상태와 서버 환경변수 CODEX_COMMAND, CODEX_MODEL, CODEX_TIMEOUT_MS를 확인하세요."],
+      disclaimer: "본 결과는 공개 데이터 기반 분석 보조이며 투자 조언이 아닙니다."
+    };
+  }
+}
+
+function buildCodexMarketPrompt({ text, signal, selectedArticle }) {
+  return [
+    "너는 금융 뉴스와 주가 예측을 해석하는 한국어 분석 보조 엔진이다.",
+    "투자 조언, 매수/매도 지시, 확정적 수익 표현은 금지한다.",
+    "입력된 기사 본문, 선택 신호, 단기 예측 데이터를 근거로만 판단한다.",
+    "반드시 JSON 객체 하나만 출력한다. 마크다운 코드블록을 쓰지 않는다.",
+    "JSON 스키마:",
+    "{",
+    "  \"summary\": \"2문장 이내 핵심 해석\",",
+    "  \"direction\": \"상승|하락|중립\",",
+    "  \"confidence\": 0-100,",
+    "  \"key_points\": [\"근거 1\", \"근거 2\", \"근거 3\"],",
+    "  \"risks\": [\"반대 시나리오 또는 불확실성\"],",
+    "  \"watch_items\": [\"확인할 지표나 이벤트\"],",
+    "  \"disclaimer\": \"투자 조언이 아니라는 한 문장\"",
+    "}",
+    "",
+    "[선택 기사]",
+    JSON.stringify(selectedArticle, null, 2),
+    "",
+    "[뉴스 해석 입력]",
+    text || "-",
+    "",
+    "[선택 신호]",
+    JSON.stringify(signal, null, 2)
+  ].join("\n");
+}
+
+async function runCodexExec(prompt) {
+  const tmpRoot = await mkdtemp(path.join(os.tmpdir(), "finance-codex-"));
+  const outputFile = path.join(tmpRoot, "last-message.txt");
+  const args = [
+    "exec",
+    "--ephemeral",
+    "--sandbox",
+    "read-only",
+    "-c",
+    "approval_policy=\"never\"",
+    "-m",
+    CODEX_MODEL,
+    "-C",
+    __dirname,
+    "-o",
+    outputFile,
+    "-"
+  ];
+
+  try {
+    const { stderr } = await runProcess(CODEX_COMMAND, args, prompt, CODEX_TIMEOUT_MS);
+    const message = existsSync(outputFile) ? await readFile(outputFile, "utf8") : "";
+    if (!message.trim()) throw new Error(stderr.trim() || "Codex CLI가 빈 응답을 반환했습니다.");
+    return message;
+  } finally {
+    await rm(tmpRoot, { recursive: true, force: true });
+  }
+}
+
+function runProcess(command, args, input, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      cwd: __dirname,
+      env: { ...process.env, NO_COLOR: "1" },
+      stdio: ["pipe", "pipe", "pipe"]
+    });
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      child.kill("SIGTERM");
+      reject(new Error(`Codex CLI 분석 시간이 ${Math.round(timeoutMs / 1000)}초를 초과했습니다.`));
+    }, timeoutMs);
+
+    child.stdout.on("data", (chunk) => { stdout += chunk.toString("utf8"); });
+    child.stderr.on("data", (chunk) => { stderr += chunk.toString("utf8"); });
+    child.on("error", (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(error);
+    });
+    child.on("close", (code) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (code === 0) resolve({ stdout, stderr });
+      else reject(new Error((stderr || stdout || `Codex CLI exited with ${code}`).trim()));
+    });
+
+    child.stdin.end(input);
+  });
+}
+
+function parseCodexAnalysis(raw) {
+  const text = String(raw || "").trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "");
+  const jsonText = text.startsWith("{") ? text : text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1);
+  const parsed = JSON.parse(jsonText);
+  return {
+    summary: String(parsed.summary || "").trim(),
+    direction: normalizeDirection(parsed.direction),
+    confidence: clamp(Number(parsed.confidence || 0), 0, 100),
+    key_points: normalizeStringList(parsed.key_points).slice(0, 5),
+    risks: normalizeStringList(parsed.risks).slice(0, 5),
+    watch_items: normalizeStringList(parsed.watch_items).slice(0, 5),
+    disclaimer: String(parsed.disclaimer || "").trim()
+  };
+}
+
+function normalizeDirection(value) {
+  const text = String(value || "").trim();
+  if (/상승|positive|bull/i.test(text)) return "상승";
+  if (/하락|negative|bear/i.test(text)) return "하락";
+  return "중립";
+}
+
+function normalizeStringList(value) {
+  if (Array.isArray(value)) return value.map((item) => String(item || "").trim()).filter(Boolean);
+  const text = String(value || "").trim();
+  return text ? [text] : [];
+}
+
+function compactSignalForPrompt(signal) {
+  return {
+    title: signal.title || "",
+    summary: signal.summary || "",
+    reasoning: signal.reasoning || "",
+    sentiment_score: signal.sentiment_score ?? null,
+    confidence: signal.confidence ?? null,
+    expected_horizon: signal.expected_horizon || "",
+    prediction_summary: signal.prediction_summary || null,
+    impact_tickers: (signal.impact_tickers || []).slice(0, 5),
+    transmission_chain: (signal.transmission_chain || []).slice(0, 6),
+    sources: (signal.sources || []).slice(0, 3)
+  };
+}
+
+function compactArticleForPrompt(article) {
+  return {
+    title: article.title || "",
+    summary: article.extracted_summary || article.summary || article.snippet || "",
+    url: article.final_url || article.url || "",
+    source_name: article.source_name || "",
+    published_at: article.published_at || ""
+  };
+}
+
+function trimForPrompt(value, max) {
+  const text = String(value || "").trim();
+  return text.length > max ? `${text.slice(0, max)}\n[이후 생략]` : text;
 }
 
 function keywordMatches(haystack, words) {

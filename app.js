@@ -54,6 +54,7 @@ const state = {
   articleSearchRequests: new Set(),
   chartRequests: new Set(),
   chartErrors: {},
+  lastReport: null,
   filter: "all",
   query: ""
 };
@@ -1366,6 +1367,103 @@ function renderCodexAnalysis(data) {
   `;
 }
 
+function setReportActionsEnabled(enabled) {
+  document.querySelectorAll("[data-report-action]").forEach((button) => {
+    button.disabled = !enabled;
+  });
+}
+
+async function copyReport() {
+  const markdown = state.lastReport?.markdown || "";
+  if (!markdown) {
+    setOutput("#reportOutput", "먼저 리포트를 생성하세요.");
+    return;
+  }
+  try {
+    if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(markdown);
+    else fallbackCopyText(markdown);
+    setOutput("#reportOutput", `${escapeHtml(markdown)}\n\n복사 완료`);
+  } catch (error) {
+    setOutput("#reportOutput", `${escapeHtml(markdown)}\n\n복사 실패: ${escapeHtml(error.message)}`);
+  }
+}
+
+function fallbackCopyText(text) {
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "true");
+  textarea.style.position = "fixed";
+  textarea.style.left = "-9999px";
+  document.body.appendChild(textarea);
+  textarea.select();
+  document.execCommand("copy");
+  textarea.remove();
+}
+
+function downloadReport(format) {
+  const report = state.lastReport;
+  if (!report?.markdown) {
+    setOutput("#reportOutput", "먼저 리포트를 생성하세요.");
+    return;
+  }
+  const isHtml = format === "html";
+  const content = isHtml ? reportHtmlDocument(report) : report.markdown;
+  const mime = isHtml ? "text/html;charset=utf-8" : "text/markdown;charset=utf-8";
+  const ext = isHtml ? "html" : "md";
+  const blob = new Blob([content], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `${reportFileStem(report.title)}.${ext}`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+  setOutput("#reportOutput", `${escapeHtml(report.markdown)}\n\n${ext.toUpperCase()} 다운로드를 시작했습니다.`);
+}
+
+function reportFileStem(title) {
+  const date = new Date().toISOString().slice(0, 10);
+  const safeTitle = String(title || "finance-signal-report")
+    .trim()
+    .replace(/[\\/:*?"<>|]/g, "")
+    .replace(/\s+/g, "-")
+    .slice(0, 48);
+  return `${safeTitle || "finance-signal-report"}-${date}`;
+}
+
+function reportHtmlDocument(report) {
+  const body = markdownToSafeHtml(report.markdown || "");
+  return `<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>${escapeHtml(report.title || "Finance Signal Radar 리포트")}</title>
+  <style>
+    body{margin:0;background:#f4efe4;color:#17211c;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;line-height:1.7}
+    main{max-width:880px;margin:0 auto;padding:48px 22px}
+    h1,h2{line-height:1.2} h1{font-size:34px} h2{margin-top:32px;border-top:1px solid #d8ccb8;padding-top:22px}
+    p,li{font-size:16px} .notice{margin-top:28px;padding:14px;border-radius:8px;background:#fff8e8;color:#5f5444}
+  </style>
+</head>
+<body><main>${body}<p class="notice">Finance Signal Radar에서 생성한 공개 데이터 기반 자동 리포트입니다.</p></main></body>
+</html>`;
+}
+
+function markdownToSafeHtml(markdown) {
+  return String(markdown || "")
+    .split("\n")
+    .map((line) => {
+      if (line.startsWith("# ")) return `<h1>${escapeHtml(line.slice(2))}</h1>`;
+      if (line.startsWith("## ")) return `<h2>${escapeHtml(line.slice(3))}</h2>`;
+      if (/^\d+\.\s/.test(line)) return `<p><strong>${escapeHtml(line)}</strong></p>`;
+      if (/^\s+-\s/.test(line)) return `<p>${escapeHtml(line.trim())}</p>`;
+      return line.trim() ? `<p>${escapeHtml(line)}</p>` : "";
+    })
+    .join("\n");
+}
+
 function selectedPredictionQuery() {
   const signal = state.selectedSignal;
   if (!signal) return "금융 경제 주식 비트코인 금리";
@@ -1737,8 +1835,13 @@ async function runTool(tool) {
     }
     if (tool === "report") {
       const data = await apiPost("/api/report/generate", { signals: state.signals, title: "Finance Signal Radar 리포트" });
+      state.lastReport = data;
+      setReportActionsEnabled(true);
       setOutput("#reportOutput", escapeHtml(data.markdown));
     }
+    if (tool === "report-copy") await copyReport();
+    if (tool === "report-download-md") downloadReport("md");
+    if (tool === "report-download-html") downloadReport("html");
   } catch (error) {
     const outputMap = {
       polymarket: "#polyOutput",
@@ -1750,7 +1853,10 @@ async function runTool(tool) {
       predict: "#predictOutput",
       track: "#trackOutput",
       visualize: "#visualOutput",
-      report: "#reportOutput"
+      report: "#reportOutput",
+      "report-copy": "#reportOutput",
+      "report-download-md": "#reportOutput",
+      "report-download-html": "#reportOutput"
     };
     setOutput(outputMap[tool] || `#${tool}Output`, `오류: ${escapeHtml(error.message)}`);
   }

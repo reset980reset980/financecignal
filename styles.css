@@ -439,11 +439,17 @@ button {
 
 .button-row {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
 }
 
 .button-row button {
   flex: 1;
+}
+
+.button-row button[disabled] {
+  cursor: not-allowed;
+  opacity: 0.45;
 }
 
 .prediction-summary {

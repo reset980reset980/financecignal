@@ -977,7 +977,8 @@ function selectedPredictionQuery() {
   const ticker = firstTickerInfo(signal);
   const prediction = signal.prediction_summary || {};
   const stock = koText(ticker?.name || ticker?.ticker || ticker?.code || "");
-  return [stock, prediction.direction, signal.expected_horizon, "주가 예측시장"].filter(Boolean).join(" ");
+  const horizon = signal.expected_horizon === "예측시장" ? "" : signal.expected_horizon;
+  return [...new Set([stock, prediction.direction, horizon, "주가 예측시장"].filter(Boolean))].join(" ");
 }
 
 function formatMarketPrice(market) {
@@ -1028,13 +1029,26 @@ function summarizePredictionMarket(data) {
   };
 }
 
+function signalMatchesMarketStock(signal, stock) {
+  if (!stock) return true;
+  const code = normalizeTicker(stock.ticker || stock.code);
+  const name = normalizeStockText(stock.name);
+  return (signal?.impact_tickers || []).some((ticker) =>
+    normalizeTicker(ticker.ticker) === code ||
+    normalizeTicker(ticker.code) === code ||
+    normalizeStockText(ticker.name) === name
+  );
+}
+
 function applyPredictionMarketToSelectedSignal(data) {
-  if (!state.selectedSignal) return;
+  if (!state.selectedSignal) return false;
+  if (data.matched_stock && !signalMatchesMarketStock(state.selectedSignal, data.matched_stock)) return false;
   const summary = summarizePredictionMarket(data);
   state.selectedSignal.prediction_market_summary = summary;
   mergePredictionMarketChain(state.selectedSignal, summary);
   renderVisualFeed();
   renderDetail();
+  return true;
 }
 
 function mergePredictionMarketChain(signal, summary) {
@@ -1050,6 +1064,44 @@ function mergePredictionMarketChain(signal, summary) {
   if (index >= 0) chain[index] = node;
   else chain.push(node);
   signal.transmission_chain = chain;
+}
+
+function applyStandalonePredictionMarketSignal(data) {
+  if (!state.data || !data.matched_stock) return null;
+  const stock = data.matched_stock;
+  const summary = summarizePredictionMarket(data);
+  const signalId = `pm_${normalizeTicker(stock.ticker || stock.code)}`;
+  let signal = state.signals.find((item) => item.signal_id === signalId);
+  if (!signal) {
+    signal = {
+      signal_id: signalId,
+      title: `${stock.name}: 예측시장 ${summary.matched ? "직접 매칭" : "직접 매칭 없음"}`,
+      summary: `${stock.name} 종목 기준으로 외부 예측시장을 검증했습니다. ${summary.matched ? `직접 관련 시장 ${summary.count}개를 찾았습니다.` : "직접 관련 시장을 찾지 못해 범용 검색 결과를 배제했습니다."}`,
+      reasoning: summary.matched
+        ? `대표 예측시장: ${summary.question || "관련 시장"}`
+        : "종목명·종목코드 기준 필터를 통과한 외부 예측시장이 없습니다.",
+      sentiment_score: 0,
+      confidence: summary.matched ? 0.62 : 0.48,
+      intensity: summary.matched ? 3 : 1,
+      timeliness: 1,
+      expectation_gap: summary.matched ? 0.35 : 0.1,
+      expected_horizon: "예측시장",
+      price_in_status: "예측시장 검증 결과",
+      industry_tags: ["예측시장", "KRX"],
+      impact_tickers: [{ ticker: stock.ticker, code: stock.code, name: stock.name, weight: 1 }],
+      sources: [],
+      transmission_chain: []
+    };
+    state.signals.unshift(signal);
+    state.data.count = state.signals.length;
+  }
+  signal.prediction_market_summary = summary;
+  mergePredictionMarketChain(signal, summary);
+  state.selectedSignal = signal;
+  state.selectedTicker = stock.ticker;
+  syncToolInputsFromSelection(true);
+  render();
+  return signal;
 }
 
 function normalizeTicker(value) {
@@ -1180,7 +1232,7 @@ async function runTool(tool) {
       const q = document.querySelector("#polyQuery").value || selectedPredictionQuery();
       const data = await apiGet(`/api/polymarket/markets?limit=8&q=${encodeURIComponent(q)}`);
       setOutput("#polyOutput", renderPredictionMarkets(data));
-      applyPredictionMarketToSelectedSignal(data);
+      if (!applyPredictionMarketToSelectedSignal(data)) applyStandalonePredictionMarketSignal(data);
     }
     if (tool === "search") {
       const q = document.querySelector("#searchQuery").value || state.selectedSignal?.title || "금융 시장 뉴스";

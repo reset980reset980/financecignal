@@ -581,10 +581,10 @@ function translatePolymarketTag(tag) {
 }
 
 async function getPolymarketFinanceMarkets(query, limit) {
-  const matchedStock = findStockByQuery(query);
+  const matchedStock = await resolvePredictionMarketStock(query);
   const isStockQuery = Boolean(matchedStock);
-  const normalizedQuery = normalizePolymarketQuery(query);
-  const strictTerms = strictPolymarketTerms(query);
+  const normalizedQuery = normalizePolymarketQuery(query, matchedStock);
+  const strictTerms = strictPolymarketTerms(query, matchedStock);
   const events = await fetchJson("https://gamma-api.polymarket.com/events?active=true&closed=false&limit=160");
   const candidates = events
     .map((event) => ({ event, score: scorePolymarketEvent(event, normalizedQuery, strictTerms) }))
@@ -764,8 +764,7 @@ function scoreFallbackPrediction(item, strictTerms) {
   return Number(item.volume || 0) > 0 ? 1 : 0;
 }
 
-function normalizePolymarketQuery(query) {
-  const matchedStock = findStockByQuery(query);
+function normalizePolymarketQuery(query, matchedStock = findStockByQuery(query)) {
   if (matchedStock) {
     const terms = [matchedStock.name, ...matchedStock.keywords].join(" ");
     return `${terms} stock equity market forecast prediction`;
@@ -798,8 +797,7 @@ function normalizePolymarketQuery(query) {
   return `${base} finance economy business stocks crypto ipo market fed inflation rates`.trim();
 }
 
-function strictPolymarketTerms(query) {
-  const matchedStock = findStockByQuery(query);
+function strictPolymarketTerms(query, matchedStock = findStockByQuery(query)) {
   if (matchedStock) {
     const generic = new Set(["ai", "ev", "it", "kr", "kb"]);
     return [
@@ -820,6 +818,22 @@ function strictPolymarketTerms(query) {
   if (/ipo|상장|listing|크라켄|kraken/.test(text)) groups.push("ipo", "listing", "kraken");
   if (/주식|증시|나스닥|stock|stocks|nasdaq|s&p/.test(text)) groups.push("stock", "stocks", "nasdaq", "equity", "microstrategy");
   return [...new Set(groups)];
+}
+
+async function resolvePredictionMarketStock(query) {
+  const direct = await resolveStockByQuery(query);
+  if (direct) return direct;
+  const generic = new Set(["예측", "예측시장", "시장", "주식", "주가", "상승", "하락", "횡보", "검색", "시작", "조회", "forecast", "market", "stock", "stocks"]);
+  const terms = String(query || "")
+    .split(/[^\p{L}\p{N}.]+/u)
+    .map((term) => term.trim())
+    .filter((term) => term.length >= 2 && !generic.has(term.toLowerCase()))
+    .sort((a, b) => b.length - a.length);
+  for (const term of terms) {
+    const found = await resolveStockByQuery(term);
+    if (found) return found;
+  }
+  return null;
 }
 
 function scorePolymarketEvent(event, normalizedQuery, strictTerms = []) {

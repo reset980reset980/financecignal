@@ -1009,14 +1009,7 @@ function renderPredictionMarkets(data) {
       </a>
     `;
   }).join("");
-  const links = (data.search_links || []).slice(0, 3).map((market) => `
-    <a class="prediction-market-card muted" href="${escapeAttr(market.url || "#")}" target="_blank" rel="noopener noreferrer">
-      <strong>${escapeHtml(market.event_title_ko || market.event_title || "외부 예측시장")}</strong>
-      <span>직접 매칭이 없을 때만 여는 보조 검색 링크</span>
-    </a>
-  `).join("");
-  const fallbackLinks = links ? `<div class="prediction-market-list search-links">${links}</div>` : "";
-  return `${notice}<div class="prediction-market-list">${cards || "직접 연동 가능한 예측시장 결과가 없습니다."}</div>${fallbackLinks}`;
+  return `${notice}<div class="prediction-market-list">${cards || "직접 연동 가능한 예측시장 결과가 없습니다. 검색 링크나 범용 시장은 시각화 분석에 사용하지 않습니다."}</div>`;
 }
 
 function summarizePredictionMarket(data) {

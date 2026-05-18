@@ -610,10 +610,10 @@ async function getPolymarketFinanceMarkets(query, limit) {
       ? await getMetaculusFallback(manifoldTerm, strictTerms, limit)
       : [];
     const fallbackReason = matchedStock
-      ? `폴리마켓에 ${matchedStock.name} 종목의 직접 예측시장이 없어 예측시장 검색 링크를 제공합니다`
+      ? `폴리마켓에 ${matchedStock.name} 종목과 직접 연결되는 예측시장이 없습니다`
       : fallback.length
         ? `폴리마켓 직접 결과가 부족해 Manifold Markets의 관련 예측시장을 함께 표시합니다`
-        : `폴리마켓에 직접 매칭되는 금융 예측시장이 없어 예측시장 검색 링크를 제공합니다`;
+        : `폴리마켓에 직접 매칭되는 금융 예측시장이 없습니다`;
     return {
       query,
       normalized_query: normalizedQuery,

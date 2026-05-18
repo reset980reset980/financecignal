@@ -10,6 +10,14 @@ const PORT = Number(process.env.PORT || 3245);
 const CNY_TO_KRW = 218.59;
 const DATA_DIR = path.join(__dirname, "data");
 const SIGNAL_STORE = path.join(DATA_DIR, "signals.json");
+const KRX_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+const KRX_LISTING_BASE = "https://raw.githubusercontent.com/FinanceData/fdr_krx_data_cache/refs/heads/master/data/listing/krx";
+const KRX_HEADERS = {
+  "user-agent": "Mozilla/5.0 FinanceDashboard/1.0",
+  "referer": "https://data.krx.co.kr/contents/MDC/MDI/outerLoader/index.cmd"
+};
+
+let krxStockCache = { loadedAt: 0, tradingDate: null, items: null };
 
 const NEWS_SOURCES = {
   korean_market: "한국 금융시장",
@@ -52,14 +60,20 @@ const STOCK_ALIASES = [
   { code: "TSLA", ticker: "TSLA", name: "테슬라", market: "US", keywords: ["tesla", "테슬라"] }
 ];
 
-function findStockByQuery(query) {
-  const text = String(query || "").toLowerCase();
+function findStockByQuery(query, options = {}) {
+  const text = normalizeStockQuery(query);
+  const exact = STOCK_ALIASES.find((stock) =>
+    normalizeStockQuery(stock.name) === text ||
+    normalizeStockQuery(stock.code) === text ||
+    normalizeStockQuery(stock.ticker) === text ||
+    text.includes(normalizeStockQuery(stock.name))
+  );
+  if (exact || options.loose === false) return exact || null;
   return STOCK_ALIASES.find((stock) =>
-    stock.name.toLowerCase() === text ||
-    stock.code.toLowerCase() === text ||
-    stock.ticker.toLowerCase() === text ||
-    text.includes(stock.name.toLowerCase()) ||
-    stock.keywords.some((kw) => text.includes(kw.toLowerCase()))
+    stock.keywords.some((kw) => {
+      const keyword = normalizeStockQuery(kw);
+      return text === keyword || (/\s/.test(String(query || "")) && text.includes(keyword));
+    })
   ) || null;
 }
 
@@ -127,7 +141,7 @@ async function routeApi(req, res, url) {
   }
   if (req.method === "GET" && url.pathname === "/api/stock/search") {
     const q = url.searchParams.get("q") || "";
-    sendJson(res, 200, { query: q, results: searchStocks(q) });
+    sendJson(res, 200, { query: q, results: await searchStocks(q) });
     return;
   }
   if (req.method === "GET" && url.pathname === "/api/stock/price") {
@@ -857,22 +871,169 @@ async function getKoreanArticlesForQuery(query, count) {
   }
 }
 
-function searchStocks(q) {
-  const query = q.toLowerCase().trim();
-  if (!query) return STOCK_ALIASES.filter((stock) => stock.market === "KR");
-  const normalizedQuery = query.replace(/^(cn:|us:|global:)/, "").trim();
-  return STOCK_ALIASES.filter((stock) =>
-    [stock.code, stock.ticker, stock.name, stock.market, ...stock.keywords]
-      .join(" ")
-      .toLowerCase()
-      .includes(normalizedQuery)
-  );
+function normalizeStockQuery(value) {
+  return String(value || "")
+    .replace(/^(kr:|ko:|한국:|국내:|cn:|us:|global:)/i, "")
+    .replace(/\s+/g, "")
+    .trim()
+    .toLowerCase();
+}
+
+function stockTickerFromKrx(code, marketId, marketName) {
+  const market = String(marketId || marketName || "").toUpperCase();
+  return market.includes("STK") || market.includes("KOSPI") ? `${code}.KS` : `${code}.KQ`;
+}
+
+async function resolveStockByQuery(query) {
+  const local = findStockByQuery(query, { loose: false });
+  if (local) return local;
+  const results = await searchStocks(query, { limit: 1 });
+  return results[0] || findStockByQuery(query) || null;
+}
+
+async function searchStocks(q, options = {}) {
+  const limit = options.limit || 20;
+  const query = normalizeStockQuery(q);
+  const local = STOCK_ALIASES
+    .filter((stock) => stock.market === "KR")
+    .filter((stock) => {
+      if (!query) return true;
+      const corpus = [stock.code, stock.ticker, stock.name, stock.market, ...stock.keywords]
+        .map(normalizeStockQuery)
+        .join(" ");
+      return corpus.includes(query);
+    });
+
+  let krxMatches = [];
+  try {
+    const krxStocks = await getKrxStockUniverse();
+    krxMatches = krxStocks.filter((stock) => {
+      if (!query) return true;
+      return stock.search_text.includes(query);
+    });
+  } catch {
+    krxMatches = [];
+  }
+
+  const merged = [...local, ...krxMatches].reduce((map, stock) => {
+    if (!map.has(stock.code)) map.set(stock.code, stock);
+    return map;
+  }, new Map());
+
+  return [...merged.values()]
+    .sort((a, b) => scoreStockMatch(b, query) - scoreStockMatch(a, query))
+    .slice(0, limit);
+}
+
+function scoreStockMatch(stock, query) {
+  if (!query) return Number(stock.rank || 999999) * -1;
+  const name = normalizeStockQuery(stock.name);
+  const code = normalizeStockQuery(stock.code);
+  const ticker = normalizeStockQuery(stock.ticker);
+  if (name === query || code === query || ticker === query) return 1000;
+  if (name.startsWith(query) || code.startsWith(query)) return 800;
+  if (name.includes(query) || ticker.includes(query)) return 600;
+  return 100 - Number(stock.rank || 99999) / 1000;
+}
+
+async function getKrxStockUniverse() {
+  const now = Date.now();
+  if (krxStockCache.items && now - krxStockCache.loadedAt < KRX_CACHE_TTL_MS) {
+    return krxStockCache.items;
+  }
+  const { tradingDate, csv } = await getLatestKrxListingCsv();
+  const items = parseKrxListingCsv(csv);
+  if (!items.length) throw new Error("KRX 상장종목 목록이 비어 있습니다.");
+  krxStockCache = { loadedAt: now, tradingDate, items };
+  return items;
+}
+
+async function getLatestKrxListingCsv() {
+  try {
+    const tradingDate = await getKrxLatestTradingDate();
+    const csv = await fetchText(`${KRX_LISTING_BASE}/${tradingDate}.csv`, KRX_HEADERS);
+    return { tradingDate, csv };
+  } catch {
+    const start = new Date();
+    for (let offset = 0; offset < 14; offset += 1) {
+      const date = new Date(start.getTime() - offset * 86400000);
+      const tradingDate = date.toISOString().slice(0, 10);
+      try {
+        const csv = await fetchText(`${KRX_LISTING_BASE}/${tradingDate}.csv`, KRX_HEADERS);
+        return { tradingDate, csv };
+      } catch {
+        continue;
+      }
+    }
+  }
+  throw new Error("최신 KRX 상장종목 캐시 CSV를 찾지 못했습니다.");
+}
+
+async function getKrxLatestTradingDate() {
+  const url = "https://data.krx.co.kr/comm/bldAttendant/executeForResourceBundle.cmd?baseName=krx.mdc.i18n.component&key=B128.bld";
+  const data = await fetchJson(url, KRX_HEADERS);
+  const raw = data?.result?.output?.[0]?.max_work_dt;
+  if (!/^\d{8}$/.test(String(raw))) throw new Error("KRX 최신 거래일을 확인하지 못했습니다.");
+  return `${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)}`;
+}
+
+function parseKrxListingCsv(csv) {
+  const lines = String(csv || "").replace(/^\uFEFF/, "").trim().split(/\r?\n/);
+  if (lines.length < 2) return [];
+  const header = parseCsvLine(lines[0]).map((name) => name.replace(/^\uFEFF/, ""));
+  return lines.slice(1).map((line) => {
+    const row = parseCsvLine(line);
+    const record = Object.fromEntries(header.map((key, index) => [key, row[index] || ""]));
+    const code = record.Code;
+    const name = record.Name;
+    if (!/^\d{6}$/.test(code) || !name) return null;
+    const marketId = record.MarketId;
+    const marketName = record.Market;
+    return {
+      code,
+      ticker: stockTickerFromKrx(code, marketId, marketName),
+      name,
+      market: "KR",
+      market_name: marketName || "KRX",
+      market_id: marketId || "",
+      rank: Number(record[""] || 999999),
+      keywords: [name, code, marketName || "", record.Dept || ""].filter(Boolean),
+      source: "KRX",
+      search_text: [name, code, stockTickerFromKrx(code, marketId, marketName), marketName, record.Dept]
+        .map(normalizeStockQuery)
+        .join(" ")
+    };
+  }).filter(Boolean);
+}
+
+function parseCsvLine(line) {
+  const values = [];
+  let current = "";
+  let quoted = false;
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+    if (char === "\"") {
+      if (quoted && line[index + 1] === "\"") {
+        current += "\"";
+        index += 1;
+      } else {
+        quoted = !quoted;
+      }
+    } else if (char === "," && !quoted) {
+      values.push(current);
+      current = "";
+    } else {
+      current += char;
+    }
+  }
+  values.push(current);
+  return values;
 }
 
 async function getPrice(ticker, days = 60) {
   let known = STOCK_ALIASES.find((stock) => stock.ticker === ticker || stock.code === ticker);
   if (!known) {
-    const byName = findStockByQuery(ticker);
+    const byName = await resolveStockByQuery(ticker);
     if (byName) { known = byName; ticker = byName.ticker; }
   }
   if (known && (known.market === "KR" || known.market === "US")) {
@@ -1200,14 +1361,14 @@ async function translateOutcome(outcome) {
   return translateWithFallback(String(outcome || ""));
 }
 
-async function fetchJson(url) {
-  const response = await fetch(url, { headers: { "user-agent": "FinanceDashboard/1.0" }, signal: AbortSignal.timeout(8000) });
+async function fetchJson(url, headers = {}) {
+  const response = await fetch(url, { headers: { "user-agent": "FinanceDashboard/1.0", ...headers }, signal: AbortSignal.timeout(8000) });
   if (!response.ok) throw new Error(`${url} ${response.status}`);
   return response.json();
 }
 
-async function fetchText(url) {
-  const response = await fetch(url, { headers: { "user-agent": "FinanceDashboard/1.0" }, signal: AbortSignal.timeout(8000) });
+async function fetchText(url, headers = {}) {
+  const response = await fetch(url, { headers: { "user-agent": "FinanceDashboard/1.0", ...headers }, signal: AbortSignal.timeout(8000) });
   if (!response.ok) throw new Error(`${url} ${response.status}`);
   return response.text();
 }

@@ -993,6 +993,22 @@ function renderSearchResults(data) {
   `;
 }
 
+function renderStockLookup(found, price, fundamentals, ticker) {
+  const candidates = (found.results || []).slice(0, 8).map((stock, index) => `
+    <span class="pill ${index === 0 ? "strong" : ""}">
+      ${escapeHtml(stock.name || stock.ticker)} · ${escapeHtml(stock.ticker || stock.code)} · ${escapeHtml(stock.market || stock.market_name || "")}
+    </span>
+  `).join("");
+  const latest = fundamentals.latest_close_krw ? formatWon(fundamentals.latest_close_krw) : fundamentals.latest_close;
+  return `
+    <strong>${escapeHtml(fundamentals.name)} (${escapeHtml(ticker)})</strong><br>
+    최근 종가: ${escapeHtml(String(latest ?? "데이터 없음"))}<br>
+    1개월 변화율: ${escapeHtml(String(fundamentals.one_month_change_percent ?? 0))}%<br>
+    가격 데이터: ${price.prices.length}개
+    ${candidates ? `<div class="candidate-list"><small>검색 후보</small><div>${candidates}</div></div>` : ""}
+  `;
+}
+
 function selectedPredictionQuery() {
   const signal = state.selectedSignal;
   if (!signal) return "금융 경제 주식 비트코인 금리";
@@ -1264,12 +1280,16 @@ async function runTool(tool) {
     if (tool === "stock") {
       const q = document.querySelector("#stockQuery").value || "삼성전자";
       const found = await apiGet(`/api/stock/search?q=${encodeURIComponent(q)}`);
+      if (!found.results?.length) {
+        setOutput("#stockOutput", `검색 결과가 없습니다: ${escapeHtml(q)}<br><small>종목명, 티커, 영문 회사명으로 다시 검색해보세요.</small>`);
+        return;
+      }
       const ticker = found.results[0]?.ticker || q;
       const [price, fundamentals] = await Promise.all([
         apiGet(`/api/stock/price?ticker=${encodeURIComponent(ticker)}&days=30`),
         apiGet(`/api/stock/fundamentals?ticker=${encodeURIComponent(ticker)}`)
       ]);
-      setOutput("#stockOutput", `<strong>${escapeHtml(fundamentals.name)} (${escapeHtml(ticker)})</strong><br>최근 종가: ${fundamentals.latest_close_krw ? formatWon(fundamentals.latest_close_krw) : fundamentals.latest_close}<br>1개월 변화율: ${fundamentals.one_month_change_percent}%<br>가격 데이터: ${price.prices.length}개`);
+      setOutput("#stockOutput", renderStockLookup(found, price, fundamentals, ticker));
     }
     if (tool === "sentiment") {
       const text = document.querySelector("#sentimentText").value || articleInputText(state.selectedArticle) || state.selectedSignal?.summary || "";

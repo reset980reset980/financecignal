@@ -250,7 +250,8 @@ async function getKoreaDashboard() {
     getKoreanNews("fx_rate", 8)
   ]);
   const newsItems = dedupeNewsItems(newsBatches.flatMap((result) => result.status === "fulfilled" ? result.value.items || [] : []));
-  const stockNewsMap = mapNewsToStocks(newsItems, STOCK_ALIASES.filter((stock) => stock.market === "KR"));
+  const stockUniverse = await getDashboardStockUniverse();
+  const stockNewsMap = limitStockNewsMap(mapNewsToStocks(newsItems, stockUniverse), 10);
   const signalResults = await Promise.allSettled(
     [...stockNewsMap.entries()].map(([stock, items]) => buildSignalFromRealData(stock, items, charts))
   );
@@ -361,13 +362,87 @@ function mapNewsToStocks(items, stocks) {
   for (const item of items) {
     const text = `${item.title || ""} ${item.description || ""}`.toLowerCase();
     for (const stock of stocks) {
-      const terms = [stock.name, stock.code, stock.ticker, ...stock.keywords].map((term) => String(term).toLowerCase());
-      if (!terms.some((term) => text.includes(term))) continue;
+      const terms = stockNewsTerms(stock);
+      if (!terms.some((term) => termMatchesStockNews(text, term))) continue;
       if (!map.has(stock)) map.set(stock, []);
       map.get(stock).push(item);
     }
   }
   return new Map([...map.entries()].filter(([, matchedItems]) => matchedItems.length > 0));
+}
+
+async function getDashboardStockUniverse() {
+  try {
+    const krx = await getKrxStockUniverse();
+    return mergeStocks([...STOCK_ALIASES.filter((stock) => stock.market === "KR"), ...krx]);
+  } catch {
+    return STOCK_ALIASES.filter((stock) => stock.market === "KR");
+  }
+}
+
+function mergeStocks(stocks) {
+  return [...stocks.reduce((map, stock) => {
+    const key = normalizeStockQuery(stock.ticker || stock.code || stock.name);
+    if (!map.has(key)) map.set(key, stock);
+    return map;
+  }, new Map()).values()];
+}
+
+function limitStockNewsMap(stockNewsMap, limit) {
+  const sorted = [...stockNewsMap.entries()].sort(([, aItems], [, bItems]) => {
+    const countDelta = bItems.length - aItems.length;
+    if (countDelta) return countDelta;
+    return latestNewsTimestamp(bItems) - latestNewsTimestamp(aItems);
+  });
+  return new Map(sorted.slice(0, limit));
+}
+
+function stockNewsTerms(stock) {
+  const generic = new Set(["ai", "플랫폼", "금융", "은행", "반도체", "배터리", "2차전지", "자동차", "바이오", "kospi", "kosdaq", "krx", "stk", "ksq"]);
+  const base = [stock.name, stock.code, stock.ticker].filter(Boolean);
+  if (stock.source === "KRX") {
+    return [...new Set(base.map((term) => String(term || "").toLowerCase().trim()).filter((term) => term.length >= 2))];
+  }
+  const trustedAliases = (stock.keywords || []).filter((keyword) => {
+    const normalized = normalizeStockQuery(keyword);
+    return normalized.length >= 2 && !generic.has(normalized) && !/^\d+$/.test(normalized);
+  });
+  return [...new Set([...base, ...trustedAliases]
+    .map((term) => String(term || "").toLowerCase().trim())
+    .filter((term) => term.length >= 2))];
+}
+
+function latestNewsTimestamp(items) {
+  return Math.max(...items.map((item) => new Date(item.published_at || item.pubDate || 0).getTime()).filter(Number.isFinite), 0);
+}
+
+function termMatchesStockNews(text, term) {
+  const needle = String(term || "").toLowerCase().trim();
+  if (!needle) return false;
+  if (!/[가-힯]/.test(needle)) {
+    return new RegExp(`(^|[^a-z0-9가-힯])${escapeRegex(needle)}([^a-z0-9가-힯]|$)`, "i").test(text);
+  }
+  let index = text.indexOf(needle);
+  while (index >= 0) {
+    const before = text[index - 1] || "";
+    const after = text[index + needle.length] || "";
+    if (isKoreanLeftBoundary(before) && isKoreanRightBoundary(after)) return true;
+    index = text.indexOf(needle, index + needle.length);
+  }
+  return false;
+}
+
+function isKoreanLeftBoundary(char) {
+  return !char || !/[가-힯a-z0-9]/i.test(char);
+}
+
+function isKoreanRightBoundary(char) {
+  if (!char || !/[가-힯a-z0-9]/i.test(char)) return true;
+  return "은는이가을를과와의에도만부터까지".includes(char);
+}
+
+function escapeRegex(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function buildWorkflow(newsItems, stockNewsMap, signals, charts) {
@@ -973,8 +1048,10 @@ async function searchStocks(q, options = {}) {
     krxMatches = [];
   }
 
-  const merged = [...local, ...krxMatches].reduce((map, stock) => {
-    if (!map.has(stock.code)) map.set(stock.code, stock);
+  const yahooMatches = query ? await searchYahooStocks(q, limit) : [];
+  const merged = [...local, ...krxMatches, ...yahooMatches].reduce((map, stock) => {
+    const key = normalizeStockQuery(stock.ticker || stock.code || stock.name);
+    if (!map.has(key)) map.set(key, stock);
     return map;
   }, new Map());
 
@@ -988,10 +1065,72 @@ function scoreStockMatch(stock, query) {
   const name = normalizeStockQuery(stock.name);
   const code = normalizeStockQuery(stock.code);
   const ticker = normalizeStockQuery(stock.ticker);
+  const keywordText = (stock.keywords || []).map(normalizeStockQuery).join(" ");
+  const searchText = normalizeStockQuery(stock.search_text || "");
   if (name === query || code === query || ticker === query) return 1000;
+  if ((stock.keywords || []).some((keyword) => normalizeStockQuery(keyword) === query)) return 900;
   if (name.startsWith(query) || code.startsWith(query)) return 800;
   if (name.includes(query) || ticker.includes(query)) return 600;
+  if (keywordText.includes(query) || searchText.includes(query)) return 520;
   return 100 - Number(stock.rank || 99999) / 1000;
+}
+
+async function searchYahooStocks(q, limit) {
+  const terms = await yahooSearchTerms(q);
+  const batches = await Promise.all(terms.map(async (term) => {
+    try {
+      const url = `https://query1.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(term)}&quotesCount=${limit}&newsCount=0`;
+      const data = await fetchJson(url, { "user-agent": "Mozilla/5.0 FinanceDashboard/1.0" });
+      return (data.quotes || [])
+        .filter((quote) => ["EQUITY", "ETF"].includes(String(quote.quoteType || "").toUpperCase()))
+        .map((quote, index) => yahooQuoteToStock(quote, index, term));
+    } catch {
+      return [];
+    }
+  }));
+  return batches.flat();
+}
+
+async function yahooSearchTerms(q) {
+  const raw = String(q || "").trim();
+  const terms = [raw];
+  if (/[가-힯]/.test(raw)) {
+    try {
+      const translated = await translateToEnglish(raw);
+      if (translated && normalizeStockQuery(translated) !== normalizeStockQuery(raw)) terms.push(translated);
+    } catch {
+      // Raw query and KRX results still work when translation is unavailable.
+    }
+  }
+  const alias = findStockByQuery(raw);
+  if (alias) terms.push(alias.ticker, alias.keywords.find((kw) => /^[a-z0-9 .-]+$/i.test(kw)) || alias.name);
+  return [...new Set(terms.filter(Boolean))].slice(0, 4);
+}
+
+function yahooQuoteToStock(quote, index, term) {
+  const symbol = String(quote.symbol || "").trim();
+  const exchange = String(quote.exchange || quote.exchDisp || "").trim();
+  const name = quote.shortname || quote.longname || quote.name || symbol;
+  return {
+    code: symbol,
+    ticker: symbol,
+    name,
+    market: yahooMarketFromSymbol(symbol, exchange),
+    market_name: exchange || quote.exchDisp || "Yahoo Finance",
+    rank: 20000 + index,
+    keywords: [symbol, name, exchange, term].filter(Boolean),
+    source: "Yahoo Finance",
+    search_text: [symbol, name, exchange, term].map(normalizeStockQuery).join(" ")
+  };
+}
+
+function yahooMarketFromSymbol(symbol, exchange) {
+  const text = `${symbol} ${exchange}`.toUpperCase();
+  if (text.includes(".KS") || text.includes(".KQ") || text.includes("KSC") || text.includes("KOS")) return "KR";
+  if (text.includes(".SS")) return "SH";
+  if (text.includes(".SZ")) return "SZ";
+  if (/NMS|NYQ|NGM|ASE|NASDAQ|NYSE|AMEX/.test(text)) return "US";
+  return exchange || "GLOBAL";
 }
 
 async function getKrxStockUniverse() {
@@ -1402,6 +1541,13 @@ async function translate(text) {
   const params = new URLSearchParams({ client: "gtx", sl: "auto", tl: "ko", dt: "t", q: text });
   const raw = await fetchJson(`https://translate.googleapis.com/translate_a/single?${params.toString()}`);
   return (raw?.[0] || []).map((part) => part?.[0] || "").join("");
+}
+
+async function translateToEnglish(text) {
+  if (!text) return "";
+  const params = new URLSearchParams({ client: "gtx", sl: "auto", tl: "en", dt: "t", q: text });
+  const raw = await fetchJson(`https://translate.googleapis.com/translate_a/single?${params.toString()}`);
+  return (raw?.[0] || []).map((part) => part?.[0] || "").join("").trim();
 }
 
 async function translateWithFallback(text) {

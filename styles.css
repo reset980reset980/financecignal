@@ -264,6 +264,23 @@ button {
   font-weight: 800;
 }
 
+.candidate-list {
+  margin-top: 10px;
+}
+
+.candidate-list small {
+  display: block;
+  margin-bottom: 6px;
+  color: #6d6558;
+  font-weight: 900;
+}
+
+.candidate-list > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
 .tool-notice {
   margin-bottom: 8px;
   padding: 8px 10px;
@@ -917,6 +934,11 @@ button {
 .mood.neutral {
   background: #e5e1d4;
   color: #5d625c;
+}
+
+.pill.strong {
+  background: #143d35;
+  color: #fffdf7;
 }
 
 .detail {

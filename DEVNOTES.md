@@ -63,8 +63,13 @@ https://api.manifold.markets/v0/search-markets?term=...
 호재=초록, 악재=빨강, 중립=회색.
 
 #### `searchStocks(q)`
-쿼리가 없으면 KR 종목만 반환. 쿼리 있으면 모든 시장에서 검색.
-(이전에는 KR만 검색하여 애플/테슬라 누락 버그 있었음 — 수정됨)
+쿼리가 없으면 국내 대표 종목을 반환. 쿼리 있으면 다음 순서로 병합 검색:
+- KRX 전체 상장 CSV 캐시
+- Yahoo Finance 검색 API
+- 한글 해외 종목명 영어 번역 후 Yahoo Finance 재검색
+- `STOCK_ALIASES`는 보조 별칭/정렬 힌트로만 사용
+
+대시보드 신호 감지는 KRX 전체 종목명을 사용하되 단순 substring이 아니라 앞뒤 경계와 한국어 조사를 확인해 `SK`, `LG`, `이닉스` 같은 짧은 이름 오탐을 줄인다.
 
 ### app.js
 

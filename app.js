@@ -478,7 +478,7 @@ function visualSignalCard(signal, index) {
           ${metricBar("괴리", metrics.expectationGap)}
           ${metricBar("시의성", metrics.timeliness)}
           ${prediction.confidence ? `<div class="prediction-inline"><strong>예측 신뢰도 ${escapeHtml(String(prediction.confidence))}%</strong><span>범위 ${escapeHtml(String(prediction.target_low ?? "-"))}% ~ ${escapeHtml(String(prediction.target_high ?? "-"))}%</span></div>` : ""}
-          ${predictionMarket ? `<div class="prediction-inline market"><strong>예측시장 ${escapeHtml(predictionMarket.direct ? "직접 반영" : "검색 연결")}</strong><span>${escapeHtml(predictionMarket.probability ? `대표 확률 ${predictionMarket.probability}%` : predictionMarket.question || "검색 링크 제공")}</span></div>` : ""}
+          ${predictionMarket ? `<div class="prediction-inline market"><strong>예측시장 ${escapeHtml(predictionMarket.matched ? "직접 반영" : "직접 매칭 없음")}</strong><span>${escapeHtml(predictionMarket.matched ? (predictionMarket.probability ? `대표 확률 ${predictionMarket.probability}%` : predictionMarket.question || "직접 관련 시장") : "관련 없는 검색 결과 배제")}</span></div>` : ""}
         </div>
         <div class="mini-chain-map">
           <div class="mini-chain-title">전달 그래프</div>
@@ -974,9 +974,10 @@ function renderSearchResults(data) {
 function selectedPredictionQuery() {
   const signal = state.selectedSignal;
   if (!signal) return "금융 경제 주식 비트코인 금리";
-  const tickers = (signal.impact_tickers || []).map((ticker) => koText(ticker.name || ticker.ticker || ticker.code)).filter(Boolean);
-  const tags = signal.industry_tags || [];
-  return [koText(signal.title), ...tickers, ...tags, "예측시장"].filter(Boolean).join(" ");
+  const ticker = firstTickerInfo(signal);
+  const prediction = signal.prediction_summary || {};
+  const stock = koText(ticker?.name || ticker?.ticker || ticker?.code || "");
+  return [stock, prediction.direction, signal.expected_horizon, "주가 예측시장"].filter(Boolean).join(" ");
 }
 
 function formatMarketPrice(market) {
@@ -990,13 +991,14 @@ function formatMarketPrice(market) {
 }
 
 function renderPredictionMarkets(data) {
-  const notice = data.fallback
-    ? `<div class="tool-notice">${escapeHtml(data.fallback_reason || "직접 예측시장 검색 링크를 표시합니다.")}</div>`
-    : `<div class="tool-notice good">폴리마켓 직접 매칭 ${data.count || 0}개</div>`;
-  const cards = (data.markets || []).map((market) => {
+  const directMarkets = (data.markets || []).filter((market) => market.source !== "search-link");
+  const notice = directMarkets.length
+    ? `<div class="tool-notice good">선택 신호와 직접 관련된 예측시장 ${directMarkets.length}개</div>`
+    : `<div class="tool-notice">${escapeHtml(data.fallback_reason || "선택 신호와 직접 관련된 외부 예측시장을 찾지 못했습니다. 관련 없는 검색 결과는 시각화에 반영하지 않습니다.")}</div>`;
+  const cards = directMarkets.map((market) => {
     const price = formatMarketPrice(market);
     const volume = Number(market.volume || 0);
-    const volumeText = volume > 0 ? `거래량 ${Math.round(volume).toLocaleString("ko-KR")}` : "검색 링크";
+    const volumeText = volume > 0 ? `거래량 ${Math.round(volume).toLocaleString("ko-KR")}` : "직접 결과";
     const source = market.event_title_ko || market.event_title || market.source || data.source || "예측시장";
     return `
       <a class="prediction-market-card" href="${escapeAttr(market.url || "#")}" target="_blank" rel="noopener noreferrer">
@@ -1007,29 +1009,54 @@ function renderPredictionMarkets(data) {
       </a>
     `;
   }).join("");
-  return `${notice}<div class="prediction-market-list">${cards || "조건에 맞는 예측시장을 찾지 못했습니다."}</div>`;
+  const links = (data.search_links || []).slice(0, 3).map((market) => `
+    <a class="prediction-market-card muted" href="${escapeAttr(market.url || "#")}" target="_blank" rel="noopener noreferrer">
+      <strong>${escapeHtml(market.event_title_ko || market.event_title || "외부 예측시장")}</strong>
+      <span>직접 매칭이 없을 때만 여는 보조 검색 링크</span>
+    </a>
+  `).join("");
+  const fallbackLinks = links ? `<div class="prediction-market-list search-links">${links}</div>` : "";
+  return `${notice}<div class="prediction-market-list">${cards || "직접 연동 가능한 예측시장 결과가 없습니다."}</div>${fallbackLinks}`;
 }
 
 function summarizePredictionMarket(data) {
-  const markets = data.markets || [];
+  const markets = (data.markets || []).filter((market) => market.source !== "search-link");
   const first = markets[0] || {};
   const prices = Array.isArray(first.outcomePrices) ? first.outcomePrices.map(Number).filter(Number.isFinite) : [];
   const probability = prices.length ? Math.round(Math.max(...prices) * 100) : null;
   return {
-    direct: !data.fallback,
+    direct: Boolean(data.direct_match && markets.length),
+    matched: Boolean(data.direct_match && markets.length),
     source: data.source || "prediction-market",
-    count: data.count || markets.length,
+    count: markets.length,
     question: first.question_ko || first.question || "",
     probability,
-    label: data.fallback ? "검색 링크" : `직접 ${data.count || markets.length}개`
+    label: markets.length ? `직접 ${markets.length}개` : "직접 매칭 없음"
   };
 }
 
 function applyPredictionMarketToSelectedSignal(data) {
   if (!state.selectedSignal) return;
-  state.selectedSignal.prediction_market_summary = summarizePredictionMarket(data);
+  const summary = summarizePredictionMarket(data);
+  state.selectedSignal.prediction_market_summary = summary;
+  mergePredictionMarketChain(state.selectedSignal, summary);
   renderVisualFeed();
   renderDetail();
+}
+
+function mergePredictionMarketChain(signal, summary) {
+  const chain = Array.isArray(signal.transmission_chain) ? [...signal.transmission_chain] : [];
+  const node = {
+    node_name: "예측시장 검증",
+    impact_type: summary.matched ? "보강" : "중립",
+    logic: summary.matched
+      ? `외부 예측시장 ${summary.count}개 직접 매칭${summary.probability ? `, 대표 확률 ${summary.probability}%` : ""}: ${summary.question || "관련 시장"}`
+      : "선택 종목과 직접 관련된 외부 예측시장이 없어 관련 없는 검색 결과는 배제했습니다"
+  };
+  const index = chain.findIndex((item) => /예측시장/.test(String(item.node_name || "")));
+  if (index >= 0) chain[index] = node;
+  else chain.push(node);
+  signal.transmission_chain = chain;
 }
 
 function normalizeTicker(value) {

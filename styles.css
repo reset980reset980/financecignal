@@ -297,6 +297,11 @@ button {
   text-decoration: none;
 }
 
+.prediction-market-card.muted {
+  opacity: 0.78;
+  border-style: dashed;
+}
+
 .prediction-market-card strong {
   color: #164f7a;
   font-size: 13px;

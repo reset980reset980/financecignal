@@ -596,6 +596,7 @@ async function getPolymarketFinanceMarkets(query, limit) {
     for (const market of event.markets || []) {
       if (markets.length >= limit) break;
       if (market.closed || market.active === false) continue;
+      if (scorePolymarketMarket(market, event, normalizedQuery, strictTerms, isStockQuery) <= 0) continue;
       markets.push(await mapPolymarket({ ...market, event }));
     }
     if (markets.length >= limit) break;
@@ -620,8 +621,12 @@ async function getPolymarketFinanceMarkets(query, limit) {
       source: fallback.length ? "manifold-fallback" : "prediction-search-links",
       fallback: true,
       fallback_reason: fallbackReason,
-      count: fallback.length || Math.min(limit, predictionSearchLinks(query, matchedStock).length),
-      markets: fallback.length ? fallback : predictionSearchLinks(query, matchedStock).slice(0, limit)
+      direct_match: false,
+      stock_query: isStockQuery,
+      matched_stock: matchedStock ? { code: matchedStock.code, ticker: matchedStock.ticker, name: matchedStock.name } : null,
+      count: fallback.length,
+      markets: fallback,
+      search_links: predictionSearchLinks(query, matchedStock).slice(0, limit)
     };
   }
 
@@ -631,6 +636,9 @@ async function getPolymarketFinanceMarkets(query, limit) {
     strict_terms: strictTerms,
     source: "polymarket-events-finance-filter",
     fallback: false,
+    direct_match: true,
+    stock_query: isStockQuery,
+    matched_stock: matchedStock ? { code: matchedStock.code, ticker: matchedStock.ticker, name: matchedStock.name } : null,
     count: markets.length,
     markets
   };
@@ -793,7 +801,15 @@ function normalizePolymarketQuery(query) {
 function strictPolymarketTerms(query) {
   const matchedStock = findStockByQuery(query);
   if (matchedStock) {
-    return matchedStock.keywords.filter((kw) => /^[a-z]/i.test(kw));
+    const generic = new Set(["ai", "ev", "it", "kr", "kb"]);
+    return [
+      matchedStock.name,
+      matchedStock.code,
+      matchedStock.ticker,
+      ...matchedStock.keywords
+    ]
+      .map((term) => String(term || "").toLowerCase().replace(/\.(ks|kq)$/i, ""))
+      .filter((term) => term.length > 2 && !generic.has(term));
   }
   const text = String(query || "").toLowerCase();
   const groups = [];
@@ -826,6 +842,26 @@ function scorePolymarketEvent(event, normalizedQuery, strictTerms = []) {
   score += tokens.reduce((sum, token) => sum + (hasSearchTerm(haystack, token) ? 2 : 0), 0);
   if (/gta|album|stanley cup|nba finals|pregnant|prison|movie|music|sports event/i.test(haystack)) score -= 20;
   return score;
+}
+
+function scorePolymarketMarket(market, event, normalizedQuery, strictTerms = [], isStockQuery = false) {
+  const tags = (event.tags || []).map((tag) => String(tag.slug || tag.label || "").toLowerCase());
+  const haystack = [
+    event.title,
+    event.description,
+    event.ticker,
+    event.slug,
+    market.question,
+    market.description,
+    market.slug,
+    ...tags
+  ].join(" ").toLowerCase();
+  if (/gta|album|stanley cup|nba finals|pregnant|prison|movie|music|celebrity|football|baseball/.test(haystack)) return 0;
+  if (isStockQuery && strictTerms.length && !strictTerms.some((term) => hasSearchTerm(haystack, term))) return 0;
+  const tokens = normalizedQuery.split(/\s+/).filter((token) => token.length > 2);
+  const tokenScore = tokens.reduce((sum, token) => sum + (hasSearchTerm(haystack, token) ? 1 : 0), 0);
+  const strictScore = strictTerms.reduce((sum, term) => sum + (hasSearchTerm(haystack, term) ? 5 : 0), 0);
+  return strictScore + tokenScore;
 }
 
 function hasSearchTerm(haystack, term) {

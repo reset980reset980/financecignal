@@ -48,6 +48,8 @@ const state = {
   selectedTicker: null,
   selectedArticle: null,
   articleSelections: [],
+  articleSearchCache: new Map(),
+  articleSearchRequests: new Set(),
   chartRequests: new Set(),
   chartErrors: {},
   filter: "all",
@@ -759,41 +761,84 @@ function renderLinks(selector, links, labelKey) {
   }).join("") || `<div class="empty">링크 없음</div>`;
 }
 
+function articleSearchQuery(signal) {
+  const ticker = firstTickerInfo(signal);
+  const stock = displayText(ticker?.name || ticker?.code || ticker?.ticker || "");
+  if (stock) return `${stock} 뉴스 실적 전망`;
+  const title = displayText(signal?.title || "").replace(/:\s*시장 예측\s*(상승|하락|횡보)?/g, "").trim();
+  return `${title || "한국 금융시장"} 관련 뉴스`;
+}
+
 function renderKoreanArticleSearch(signal) {
-  const tickers = (signal.impact_tickers || []).map((ticker) => koText(ticker.name || ticker.code || ticker.ticker));
-  const query = [koText(signal.title), ...tickers, "관련 뉴스"].filter(Boolean).join(" ");
-  const encoded = encodeURIComponent(query);
-  const articles = (signal.sources || []).filter((source) => source.url || source.title).slice(0, 4);
-  const links = [
-    { label: "네이버 뉴스", url: `https://search.naver.com/search.naver?where=news&query=${encoded}` },
-    { label: "구글 뉴스 한국", url: `https://news.google.com/search?q=${encoded}&hl=ko&gl=KR&ceid=KR:ko` },
-    { label: "다음 뉴스", url: `https://search.daum.net/search?w=news&q=${encoded}` },
-    { label: "빙 뉴스 한국어", url: `https://www.bing.com/news/search?q=${encoded}&setlang=ko-KR` }
-  ];
+  const query = articleSearchQuery(signal);
+  const key = normalizeStockText(query);
+  const cached = state.articleSearchCache.get(key);
+  if (cached) {
+    renderKoreanArticleResults(query, cached);
+    return;
+  }
+  $("#searchLinks").dataset.sources = "[]";
+  $("#searchLinks").innerHTML = `<div class="empty">실제 한국어 기사를 불러오는 중입니다.</div>`;
+  loadKoreanArticleResults(query, key);
+}
+
+async function loadKoreanArticleResults(query, key) {
+  if (state.articleSearchRequests.has(key)) return;
+  state.articleSearchRequests.add(key);
+  try {
+    const data = await apiGet(`/api/search?q=${encodeURIComponent(query)}`);
+    state.articleSearchCache.set(key, data);
+    if (normalizeStockText(articleSearchQuery(state.selectedSignal)) === key) {
+      renderKoreanArticleResults(query, data);
+      queueRevealScan();
+    }
+  } catch (error) {
+    if (normalizeStockText(articleSearchQuery(state.selectedSignal)) === key) {
+      $("#searchLinks").dataset.sources = "[]";
+      $("#searchLinks").innerHTML = `<div class="empty">기사를 불러오지 못했습니다: ${escapeHtml(error.message)}</div>`;
+    }
+  } finally {
+    state.articleSearchRequests.delete(key);
+  }
+}
+
+function renderKoreanArticleResults(query, data) {
+  const articles = (data.articles || []).slice(0, 5).map((article) => ({
+    title: article.title || "기사 제목 없음",
+    snippet: article.snippet || "",
+    url: article.url || "",
+    source_name: article.source_name || "한국어 기사",
+    published_at: article.published_at || ""
+  }));
   const articleRows = articles.map((article, index) => {
     const title = displayText(article.title || article.url || "기사");
-    const meta = koSourceName(article.source_name || article.source || "한국어 기사");
+    const snippet = displayText(article.snippet || "").slice(0, 92);
+    const meta = `${koSourceName(article.source_name)}${article.published_at ? ` · ${formatDate(article.published_at)}` : ""}`;
     return `
       <div class="article-search-row">
         <button type="button" class="news-select" data-source-index="${index}">
           <strong>${escapeHtml(title)}</strong>
           <span>${escapeHtml(meta)}</span>
+          ${snippet ? `<small>${escapeHtml(snippet)}</small>` : ""}
         </button>
         <a class="mini-open" href="${escapeAttr(article.url || "#")}" target="_blank" rel="noopener noreferrer">바로가기</a>
       </div>
     `;
   }).join("");
-  const searchRows = links.map((link) => `
+  const searchRows = (data.engines || []).map((link) => `
     <div class="article-search-row muted">
-      <button type="button" class="news-select" data-search-query="${escapeAttr(`${link.label} · ${query}`)}">
-        <strong>${escapeHtml(link.label)}</strong>
+      <button type="button" class="news-select" data-search-query="${escapeAttr(`${link.name || link.title} · ${query}`)}">
+        <strong>${escapeHtml(link.name || link.title || "검색")}</strong>
         <span>${escapeHtml(query)}</span>
       </button>
       <a class="mini-open" href="${escapeAttr(link.url)}" target="_blank" rel="noopener noreferrer">바로가기</a>
     </div>
   `).join("");
   $("#searchLinks").dataset.sources = JSON.stringify(articles);
-  $("#searchLinks").innerHTML = articleRows || searchRows;
+  $("#searchLinks").innerHTML = articleRows || `
+    <div class="empty">실제 기사 결과가 없습니다. 아래 검색 바로가기를 사용하세요.</div>
+    ${searchRows}
+  `;
 }
 
 function renderChart() {

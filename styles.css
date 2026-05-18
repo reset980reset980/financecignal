@@ -1380,6 +1380,15 @@ meter {
   font-weight: 900;
 }
 
+.news-select small {
+  overflow: hidden;
+  color: #5d625c;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+}
+
 .mini-open {
   display: inline-flex;
   align-items: center;

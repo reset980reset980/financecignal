@@ -48,6 +48,8 @@ const state = {
   selectedTicker: null,
   selectedArticle: null,
   articleSelections: [],
+  chartRequests: new Set(),
+  chartErrors: {},
   filter: "all",
   query: ""
 };
@@ -724,9 +726,11 @@ function renderChart() {
 
   if (!chart) {
     $("#chartTitle").textContent = "가격·예측 차트";
-    $("#chartMeta").textContent = "선택한 종목의 차트 데이터가 없습니다.";
+    const error = state.chartErrors[state.selectedTicker];
+    $("#chartMeta").textContent = error || "선택 종목의 실제 가격·예측 데이터를 불러오는 중입니다.";
     $("#predictionRange").textContent = "-";
-    drawEmpty(ctx, canvas, "차트 데이터 없음");
+    drawEmpty(ctx, canvas, error ? "차트 로딩 실패" : "차트 로딩 중");
+    ensureChartForSelectedTicker();
     return;
   }
 
@@ -771,6 +775,24 @@ function renderChart() {
   ctx.fillText(`${koText(chart.name || chart.ticker)}`, left, 22);
   ctx.font = "12px sans-serif";
   ctx.fillText("실선: 최근 종가 / 점선: 예측 종가 / 가격 단위: 원화 환산", left, canvas.height - 14);
+}
+
+function ensureChartForSelectedTicker() {
+  const ticker = state.selectedTicker;
+  if (!ticker || state.data?.charts?.[ticker] || state.chartRequests.has(ticker) || state.chartErrors[ticker]) return;
+  state.chartRequests.add(ticker);
+  delete state.chartErrors[ticker];
+  apiGet(`/api/predict?ticker=${encodeURIComponent(ticker)}&days=5`)
+    .then((data) => {
+      applyPredictionToSignal(data);
+    })
+    .catch((error) => {
+      state.chartErrors[ticker] = `차트 데이터를 불러오지 못했습니다: ${error.message}`;
+      if (state.selectedTicker === ticker) renderChart();
+    })
+    .finally(() => {
+      state.chartRequests.delete(ticker);
+    });
 }
 
 function drawGrid(ctx, canvas, left, top, width, height, yMin, yMax) {

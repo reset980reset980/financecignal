@@ -276,9 +276,11 @@ async function loadData() {
     state.signals = Array.isArray(data.signals) ? data.signals : [];
     state.selectedSignal = state.signals[0] || null;
     state.selectedTicker = firstTicker(state.selectedSignal);
+    syncToolInputsFromSelection(true);
     render();
     setSync("한국어 번역 중");
     localizeData(data).then(() => {
+      syncToolInputsFromSelection(true);
       render();
       setSync("실시간 연결");
     });
@@ -294,6 +296,42 @@ function setSync(label) {
 
 function firstTicker(signal) {
   return signal?.impact_tickers?.[0]?.ticker || Object.keys(state.data?.charts || {})[0] || null;
+}
+
+function firstTickerInfo(signal = state.selectedSignal) {
+  const tickers = signal?.impact_tickers || [];
+  return tickers.find((ticker) => ticker.ticker === state.selectedTicker || ticker.code === state.selectedTicker) || tickers[0] || null;
+}
+
+function selectedStockName(signal = state.selectedSignal) {
+  const ticker = firstTickerInfo(signal);
+  return koText(ticker?.name || ticker?.code || ticker?.ticker || firstTicker(signal) || "");
+}
+
+function selectedNewsQuery(signal = state.selectedSignal) {
+  if (!signal) return "한국 금융시장 뉴스";
+  const ticker = firstTickerInfo(signal);
+  const tags = (signal.industry_tags || []).slice(0, 2);
+  return [koText(ticker?.name || ""), ...tags, "뉴스", "실적", "전망"].filter(Boolean).join(" ");
+}
+
+function setSyncedInput(selector, value, force = false) {
+  const element = document.querySelector(selector);
+  const next = String(value || "").trim();
+  if (!element || !next) return;
+  const canSync = force || !element.value.trim() || element.dataset.synced === "true";
+  if (!canSync) return;
+  element.value = next;
+  element.dataset.synced = "true";
+}
+
+function syncToolInputsFromSelection(force = false) {
+  if (!state.selectedSignal) return;
+  const stockName = selectedStockName();
+  setSyncedInput("#polyQuery", selectedPredictionQuery(), force);
+  setSyncedInput("#searchQuery", selectedNewsQuery(), force);
+  setSyncedInput("#stockQuery", stockName, force);
+  setSyncedInput("#predictTicker", stockName || state.selectedTicker, force);
 }
 
 function render() {
@@ -347,6 +385,7 @@ function renderSignalList() {
     button.addEventListener("click", () => {
       state.selectedSignal = signal;
       state.selectedTicker = firstTicker(signal);
+      syncToolInputsFromSelection(true);
       render();
     });
     $("#signalList").appendChild(button);
@@ -809,6 +848,7 @@ $("#refreshBtn").addEventListener("click", loadData);
 $("#searchInput").addEventListener("input", (event) => {
   state.query = event.target.value;
   syncSelectionWithVisibleSignals();
+  syncToolInputsFromSelection(true);
   render();
 });
 
@@ -816,12 +856,14 @@ $("#tickerList").addEventListener("click", (event) => {
   const button = event.target.closest(".ticker-button");
   if (!button) return;
   state.selectedTicker = button.dataset.ticker;
+  syncToolInputsFromSelection(true);
   renderDetail();
 });
 
 window.selectTicker = (ticker) => {
   if (!ticker) return;
   state.selectedTicker = ticker;
+  syncToolInputsFromSelection(true);
   renderDetail();
 };
 
@@ -830,6 +872,7 @@ window.openSignal = (signalId) => {
   if (!signal) return;
   state.selectedSignal = signal;
   state.selectedTicker = firstTicker(signal);
+  syncToolInputsFromSelection(true);
   render();
   document.querySelector(".detail")?.scrollIntoView({ behavior: "smooth", block: "start" });
 };
@@ -840,6 +883,7 @@ document.querySelectorAll(".filters button").forEach((button) => {
     button.classList.add("active");
     state.filter = button.dataset.filter;
     syncSelectionWithVisibleSignals();
+    syncToolInputsFromSelection(true);
     render();
   });
 });
@@ -988,6 +1032,112 @@ function applyPredictionMarketToSelectedSignal(data) {
   renderDetail();
 }
 
+function normalizeTicker(value) {
+  return String(value || "").toUpperCase().replace(/\.(KS|KQ|KOSPI|KOSDAQ)$/i, "");
+}
+
+function signalMatchesPrediction(signal, prediction) {
+  const code = normalizeTicker(prediction.ticker);
+  const name = normalizeStockText(prediction.name);
+  return (signal.impact_tickers || []).some((ticker) =>
+    normalizeTicker(ticker.ticker) === code ||
+    normalizeTicker(ticker.code) === code ||
+    normalizeStockText(ticker.name) === name
+  );
+}
+
+function normalizeStockText(value) {
+  return String(value || "").replace(/\s+/g, "").toLowerCase();
+}
+
+function predictionDirection(change) {
+  const value = Number(change) || 0;
+  if (value > 0.35) return "상승";
+  if (value < -0.35) return "하락";
+  return "횡보";
+}
+
+function applyPredictionToSignal(data) {
+  if (!state.data) return null;
+  const direction = predictionDirection(data.forecast_change_percent);
+  const tickerCode = normalizeTicker(data.ticker);
+  const tickerInfo = { ticker: data.ticker, code: tickerCode, name: data.name, weight: 1 };
+  const prediction = {
+    direction,
+    change_percent: Number(data.forecast_change_percent || 0),
+    confidence: data.confidence,
+    target_low: data.prediction?.target_low,
+    target_high: data.prediction?.target_high,
+    updated_at: new Date().toISOString()
+  };
+
+  state.data.charts = state.data.charts || {};
+  state.data.charts[data.ticker] = {
+    ticker: data.ticker,
+    name: data.name,
+    currency: data.currency || "KRW",
+    display_currency: data.display_currency || data.currency || "KRW",
+    prices: (data.prices || []).slice(-30),
+    forecast: data.forecast || [],
+    prediction: data.prediction || {},
+    prediction_confidence: data.confidence,
+    prediction_change_percent: prediction.change_percent,
+    prediction_direction: direction,
+    prediction_logic: data.method
+  };
+
+  let signal = state.selectedSignal && signalMatchesPrediction(state.selectedSignal, data)
+    ? state.selectedSignal
+    : state.signals.find((item) => signalMatchesPrediction(item, data));
+
+  if (!signal) {
+    signal = {
+      signal_id: `predict_${tickerCode}`,
+      title: `${data.name}: 시장 예측 ${direction}`,
+      summary: `${data.name}의 실제 가격 데이터로 ${data.expected_horizon || "T+5"} 예측을 갱신했습니다. 예측 변화율은 ${prediction.change_percent.toFixed(2)}%입니다.`,
+      reasoning: `시장 예측 도구 실행 결과를 신호 시각화에 반영했습니다. 방식: ${data.method}, 예측 신뢰도: ${data.confidence}%`,
+      sentiment_score: clamp(prediction.change_percent / 10, -1, 1),
+      confidence: clamp(Number(data.confidence || 0) / 100, 0, 1),
+      intensity: Math.max(1, Math.min(5, Math.ceil(Math.abs(prediction.change_percent) / 2))),
+      expectation_gap: clamp(Math.abs(prediction.change_percent) / 12, 0.05, 0.95),
+      timeliness: 1,
+      expected_horizon: data.expected_horizon || "T+5",
+      price_in_status: "시장 예측 도구에서 실시간 반영",
+      industry_tags: ["시장 예측"],
+      impact_tickers: [tickerInfo],
+      transmission_chain: []
+    };
+    state.signals.unshift(signal);
+    state.data.count = state.signals.length;
+  }
+
+  signal.prediction_summary = prediction;
+  signal.price_in_status = "시장 예측 도구와 동기화됨";
+  signal.confidence = clamp(Math.max(Number(signal.confidence) || 0, Number(data.confidence || 0) / 100), 0, 1);
+  signal.expectation_gap = clamp(Math.max(Number(signal.expectation_gap) || 0, Math.abs(prediction.change_percent) / 12), 0, 1);
+  signal.expected_horizon = data.expected_horizon || signal.expected_horizon || "T+5";
+  if (!signal.impact_tickers?.length) signal.impact_tickers = [tickerInfo];
+  mergePredictionChain(signal, data, direction);
+  state.selectedSignal = signal;
+  state.selectedTicker = data.ticker;
+  syncToolInputsFromSelection(true);
+  render();
+  return signal;
+}
+
+function mergePredictionChain(signal, data, direction) {
+  const chain = Array.isArray(signal.transmission_chain) ? [...signal.transmission_chain] : [];
+  const node = {
+    node_name: "시장 예측",
+    impact_type: direction === "상승" ? "상승" : direction === "하락" ? "하락" : "중립",
+    logic: `${data.name} ${data.expected_horizon || "T+5"} 예측 ${Number(data.forecast_change_percent || 0).toFixed(2)}%, 신뢰도 ${data.confidence}%`
+  };
+  const index = chain.findIndex((item) => /시장 예측|가격·예측|예측/.test(String(item.node_name || "")));
+  if (index >= 0) chain[index] = node;
+  else chain.splice(Math.min(chain.length, 2), 0, node);
+  signal.transmission_chain = chain;
+}
+
 async function checkApiHealth() {
   try {
     const health = await apiGet("/api/health");
@@ -1046,7 +1196,8 @@ async function runTool(tool) {
         ticker = rawTicker;
       }
       const data = await apiGet(`/api/predict?ticker=${encodeURIComponent(ticker)}&days=5`);
-      setOutput("#predictOutput", `<strong>${escapeHtml(data.name)} (${escapeHtml(data.ticker)})</strong><br>방식: ${escapeHtml(data.method)}<br>신뢰도: ${data.confidence}%<br>${data.forecast.map((point) => `${point.date}: ${point.close_krw ? `₩${point.close_krw.toLocaleString("ko-KR")}` : point.close}`).join("<br>")}`);
+      const linkedSignal = applyPredictionToSignal(data);
+      setOutput("#predictOutput", `<strong>${escapeHtml(data.name)} (${escapeHtml(data.ticker)})</strong><br>방식: ${escapeHtml(data.method)}<br>신뢰도: ${data.confidence}%<br>${linkedSignal ? `선택 신호 시각화 반영: ${escapeHtml(koText(linkedSignal.title || data.name))}<br>` : ""}${data.forecast.map((point) => `${point.date}: ${point.close_krw ? `₩${point.close_krw.toLocaleString("ko-KR")}` : point.close}`).join("<br>")}`);
     }
     if (tool === "track") {
       const newInfo = document.querySelector("#trackText").value || articleInputText(state.selectedArticle) || "새 정보 없음";
@@ -1114,7 +1265,9 @@ $("#searchOutput")?.addEventListener("click", (event) => {
   ["#predictTicker", "predict"],
 ].forEach(([selector, tool]) => {
   const el = document.querySelector(selector);
-  if (el) el.addEventListener("keydown", (e) => { if (e.key === "Enter") runTool(tool); });
+  if (!el) return;
+  el.addEventListener("input", () => { el.dataset.synced = "false"; });
+  el.addEventListener("keydown", (e) => { if (e.key === "Enter") runTool(tool); });
 });
 
 checkApiHealth();

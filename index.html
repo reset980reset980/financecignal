@@ -1,0 +1,231 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Finance Signal Radar</title>
+    <link rel="stylesheet" href="./styles.css?v=9" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <span class="live-dot" aria-hidden="true"></span>
+        <div>
+          <p>한국 금융시장 실시간 데이터</p>
+          <h1>Korea Finance Signal Radar</h1>
+        </div>
+      </div>
+      <div class="actions">
+        <span id="syncState" class="sync-state">연결 준비</span>
+        <button id="refreshBtn" type="button">새로고침</button>
+      </div>
+    </header>
+
+    <main class="shell">
+      <section class="market-strip" aria-label="시장 요약">
+        <article>
+          <span>업데이트</span>
+          <strong id="generatedAt">-</strong>
+        </article>
+        <article>
+          <span>신호 수</span>
+          <strong id="signalCount">0</strong>
+        </article>
+        <article>
+          <span>평균 신뢰도</span>
+          <strong id="avgConfidence">0%</strong>
+        </article>
+        <article>
+          <span>영향 종목</span>
+          <strong id="tickerCount">0</strong>
+        </article>
+      </section>
+
+      <section class="skill-console" aria-label="전체 금융 스킬 기능">
+        <div class="console-head">
+          <div>
+            <p class="eyebrow">Awesome Finance Skills API</p>
+            <h2>금융 분석 실행 메뉴</h2>
+          </div>
+          <span id="apiHealth">API 확인 중</span>
+        </div>
+        <div class="tool-grid">
+          <article>
+            <h3>뉴스·트렌드</h3>
+            <div class="inline-form">
+              <select id="newsSource">
+                <option value="korean_market">한국 금융시장</option>
+                <option value="kospi">코스피</option>
+                <option value="kosdaq">코스닥</option>
+                <option value="semiconductor">반도체</option>
+                <option value="battery">2차전지</option>
+                <option value="ai_platform">AI·플랫폼</option>
+                <option value="fx_rate">환율·금리</option>
+                <option value="global">글로벌 증시</option>
+              </select>
+              <button type="button" data-tool="news">불러오기</button>
+            </div>
+            <div id="newsOutput" class="tool-output"></div>
+          </article>
+          <article>
+            <h3>예측시장</h3>
+            <div class="inline-form">
+              <input id="polyQuery" placeholder="금리, 비트코인, IPO, 주식" />
+              <button type="button" data-tool="polymarket">금융 예측 조회</button>
+            </div>
+            <div id="polyOutput" class="tool-output"></div>
+          </article>
+          <article>
+            <h3>한국어 기사 검색</h3>
+            <div class="inline-form">
+              <input id="searchQuery" placeholder="삼성전자 반도체 실적" />
+              <button type="button" data-tool="search">검색 링크</button>
+            </div>
+            <div id="searchOutput" class="tool-output"></div>
+          </article>
+          <article>
+            <h3>종목 검색·시세</h3>
+            <div class="inline-form">
+              <input id="stockQuery" placeholder="삼성전자, 애플, 테슬라, AAPL" />
+              <button type="button" data-tool="stock">조회</button>
+            </div>
+            <div id="stockOutput" class="tool-output"></div>
+          </article>
+          <article>
+            <h3>감성 분석</h3>
+            <textarea id="sentimentText" rows="4" placeholder="분석할 금융 뉴스 문장을 입력"></textarea>
+            <button type="button" data-tool="sentiment">감성 점수</button>
+            <div id="sentimentOutput" class="tool-output"></div>
+          </article>
+          <article>
+            <h3>시장 예측</h3>
+            <div class="inline-form">
+              <input id="predictTicker" placeholder="삼성전자, 현대차, AAPL, 테슬라" />
+              <button type="button" data-tool="predict">예측</button>
+            </div>
+            <div id="predictOutput" class="tool-output"></div>
+          </article>
+          <article>
+            <h3>신호 추적</h3>
+            <textarea id="trackText" rows="4" placeholder="새 뉴스/가격 정보를 입력"></textarea>
+            <button type="button" data-tool="track">강화·약화 판정</button>
+            <div id="trackOutput" class="tool-output"></div>
+          </article>
+          <article>
+            <h3>논리 체인 시각화</h3>
+            <button type="button" data-tool="visualize">선택 신호 시각화</button>
+            <div id="visualOutput" class="tool-output visual-output"></div>
+          </article>
+          <article>
+            <h3>리포트 생성</h3>
+            <button type="button" data-tool="report">현재 신호 리포트</button>
+            <div id="reportOutput" class="tool-output report-output"></div>
+          </article>
+        </div>
+      </section>
+
+      <section class="dashboard">
+        <aside class="feed" aria-label="금융 신호 목록">
+          <div class="feed-tools">
+            <label>
+              <span>검색</span>
+              <input id="searchInput" type="search" placeholder="뉴스, 종목, 논리..." />
+            </label>
+            <div class="filters" role="group" aria-label="신호 필터">
+              <button class="active" data-filter="all">전체</button>
+              <button data-filter="positive">긍정</button>
+              <button data-filter="neutral">중립</button>
+              <button data-filter="negative">부정</button>
+            </div>
+          </div>
+          <div id="signalList" class="signal-list" aria-live="polite"></div>
+        </aside>
+
+        <section class="detail" aria-label="신호 상세">
+          <div class="detail-head">
+            <div>
+              <p id="detailSource" class="eyebrow">선택된 신호</p>
+              <h2 id="detailTitle">데이터를 불러오는 중입니다</h2>
+            </div>
+            <span id="detailMood" class="mood">-</span>
+          </div>
+
+          <div class="score-grid">
+            <div>
+              <span>감성</span>
+              <strong id="sentimentScore">0.00</strong>
+              <meter id="sentimentMeter" min="-1" max="1" value="0"></meter>
+            </div>
+            <div>
+              <span>신뢰도</span>
+              <strong id="confidenceScore">0%</strong>
+              <meter id="confidenceMeter" min="0" max="1" value="0"></meter>
+            </div>
+            <div>
+              <span>강도</span>
+              <strong id="intensityScore">0</strong>
+              <meter id="intensityMeter" min="0" max="5" value="0"></meter>
+            </div>
+            <div>
+              <span>시의성</span>
+              <strong id="timelinessScore">0%</strong>
+              <meter id="timelinessMeter" min="0" max="1" value="0"></meter>
+            </div>
+          </div>
+
+          <article class="analysis-card">
+            <h3>핵심 요약</h3>
+            <p id="summaryText">-</p>
+          </article>
+
+          <article class="analysis-card">
+            <h3>추론 근거</h3>
+            <p id="reasoningText">-</p>
+          </article>
+
+          <div class="split">
+            <article class="analysis-card">
+              <div class="section-title">
+                <h3>전달 체인</h3>
+                <span id="chainCount">0단계</span>
+              </div>
+              <ol id="chainList" class="chain-list"></ol>
+            </article>
+
+            <article class="analysis-card">
+              <div class="section-title">
+                <h3>영향 종목</h3>
+                <span id="tickerHint">차트 선택</span>
+              </div>
+              <div id="tickerList" class="ticker-list"></div>
+            </article>
+          </div>
+
+          <article class="chart-panel">
+            <div class="section-title">
+              <div>
+                <h3 id="chartTitle">가격·예측 차트</h3>
+                <p id="chartMeta">종목을 선택하면 최근 가격과 예측선이 표시됩니다.</p>
+              </div>
+              <span id="predictionRange">-</span>
+            </div>
+            <canvas id="priceChart" width="980" height="320" aria-label="가격 예측 차트"></canvas>
+          </article>
+
+          <div class="split">
+            <article class="analysis-card">
+              <h3>원 출처</h3>
+              <div id="sourceLinks" class="link-list"></div>
+            </article>
+            <article class="analysis-card">
+              <h3>한국어 기사 검색</h3>
+              <div id="searchLinks" class="link-list"></div>
+            </article>
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <script src="./app.js?v=9"></script>
+  </body>
+</html>

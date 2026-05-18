@@ -330,6 +330,8 @@ function setSyncedInput(selector, value, force = false) {
 function syncToolInputsFromSelection(force = false) {
   if (!state.selectedSignal) return;
   const stockName = selectedStockName();
+  setSyncedInput("#polyQuery", selectedPredictionQuery(), force);
+  setSyncedInput("#searchQuery", selectedNewsQuery(), force);
   setSyncedInput("#predictTicker", stockName || state.selectedTicker, force);
 }
 

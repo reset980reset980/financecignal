@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Finance Signal Radar</title>
-    <link rel="stylesheet" href="./styles.css?v=16" />
+    <link rel="stylesheet" href="./styles.css?v=17" />
   </head>
   <body>
     <header class="topbar">
@@ -81,6 +81,77 @@
           </div>
           <div id="predictOutput" class="tool-output predict-output"></div>
         </div>
+
+        <details class="advanced-console">
+          <summary role="button" aria-label="고급 분석 열기">
+            <span>
+              <strong>고급 분석</strong>
+              <small>뉴스, 예측시장, 감성, 추적, 리포트</small>
+            </span>
+            <b>열기</b>
+          </summary>
+          <div class="advanced-grid">
+            <article>
+              <h3>뉴스 흐름</h3>
+              <div class="inline-form">
+                <select id="newsSource">
+                  <option value="korean_market">한국 금융시장</option>
+                  <option value="kospi">코스피</option>
+                  <option value="kosdaq">코스닥</option>
+                  <option value="semiconductor">반도체</option>
+                  <option value="battery">2차전지</option>
+                  <option value="ai_platform">AI·플랫폼</option>
+                  <option value="fx_rate">환율·금리</option>
+                  <option value="global">글로벌 증시</option>
+                </select>
+                <button type="button" data-tool="news">불러오기</button>
+              </div>
+              <div id="newsOutput" class="tool-output"></div>
+            </article>
+
+            <article>
+              <h3>예측시장 조회</h3>
+              <div class="inline-form">
+                <input id="polyQuery" placeholder="비워두면 선택 신호 기준" />
+                <button type="button" data-tool="polymarket">조회</button>
+              </div>
+              <div id="polyOutput" class="tool-output"></div>
+            </article>
+
+            <article>
+              <h3>기사 검색</h3>
+              <div class="inline-form">
+                <input id="searchQuery" placeholder="종목명 + 이슈 키워드" />
+                <button type="button" data-tool="search">검색</button>
+              </div>
+              <div id="searchOutput" class="tool-output"></div>
+            </article>
+
+            <article>
+              <h3>감성 분석</h3>
+              <textarea id="sentimentText" rows="4" placeholder="분석할 금융 뉴스 문장을 입력"></textarea>
+              <button type="button" data-tool="sentiment">감성 점수</button>
+              <div id="sentimentOutput" class="tool-output"></div>
+            </article>
+
+            <article>
+              <h3>신호 추적</h3>
+              <textarea id="trackText" rows="4" placeholder="선택 신호를 강화/약화할 새 기사, 가격, 공시 근거 입력"></textarea>
+              <button type="button" data-tool="track">강화·약화 판정</button>
+              <div id="trackOutput" class="tool-output"></div>
+            </article>
+
+            <article>
+              <h3>리포트·체인</h3>
+              <div class="button-row">
+                <button type="button" data-tool="visualize">체인 시각화</button>
+                <button type="button" data-tool="report">리포트 생성</button>
+              </div>
+              <div id="visualOutput" class="tool-output visual-output"></div>
+              <div id="reportOutput" class="tool-output report-output"></div>
+            </article>
+          </div>
+        </details>
       </section>
 
       <section class="dashboard">
@@ -182,6 +253,6 @@
       </section>
     </main>
 
-    <script src="./app.js?v=20"></script>
+    <script src="./app.js?v=21"></script>
   </body>
 </html>

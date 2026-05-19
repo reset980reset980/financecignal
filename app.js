@@ -1572,7 +1572,7 @@ function renderCodexAnalysis(data) {
   return `
     <div class="codex-result">
       <div class="codex-result-head">
-        <strong class="inline-mood ${tone.className}">Codex AI 분석: ${escapeHtml(tone.label)}</strong>
+        <strong class="inline-mood ${tone.className}">AI 분석: ${escapeHtml(tone.label)}</strong>
         <span>${escapeHtml(String(Math.round(Number(data.confidence || 0))))}%</span>
       </div>
       <p>${escapeHtml(data.summary || "요약이 없습니다.")}</p>
@@ -1990,7 +1990,7 @@ async function runTool(tool) {
         data = await analyzeWithOpenAIClient(text);
       } else {
         if (isVercelHost()) {
-          setOutput("#sentimentOutput", "Vercel 배포본에서는 접속자 본인의 OpenAI API 키를 먼저 저장해야 AI 분석을 실행할 수 있습니다. 고급 분석의 AI API 설정에 키를 저장하세요. 키는 서버에 저장하지 않습니다.");
+          setOutput("#sentimentOutput", "Vercel 배포본에서는 접속자 본인의 OpenAI API 키를 먼저 저장해야 AI 분석을 실행할 수 있습니다. 위치: 고급 분석 > AI API 설정 > OpenAI API 키 입력 > 저장. 키는 서버에 저장하지 않습니다.");
           return;
         }
         setOutput("#sentimentOutput", "로컬 Codex CLI로 기사 맥락과 선택 종목 신호를 분석하는 중입니다. 보통 20~90초 정도 걸립니다.");
@@ -2064,7 +2064,7 @@ async function runTool(tool) {
         data = await generateOpenAIReport();
       } else {
         if (isVercelHost()) {
-          setOutput("#reportOutput", "Vercel 배포본에서는 접속자 본인의 OpenAI API 키를 먼저 저장해야 AI 리포트를 생성할 수 있습니다. 고급 분석의 AI API 설정에 키를 저장하세요. 키는 서버에 저장하지 않습니다.");
+          setOutput("#reportOutput", "Vercel 배포본에서는 접속자 본인의 OpenAI API 키를 먼저 저장해야 AI 리포트를 생성할 수 있습니다. 위치: 고급 분석 > AI API 설정 > OpenAI API 키 입력 > 저장. 키는 서버에 저장하지 않습니다.");
           return;
         }
         setOutput("#reportOutput", "로컬 Codex CLI로 전체 신호를 읽고 AI 리포트를 작성하는 중입니다. 보통 20~90초 정도 걸립니다.");

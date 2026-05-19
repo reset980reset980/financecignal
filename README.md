@@ -2,7 +2,9 @@
 
 > 한국 주식·글로벌 금융 시장의 실시간 신호를 분석하는 대시보드
 
-**라이브:** https://finance.xsw.kr/
+**로컬 운영 라이브:** https://finance.xsw.kr/
+
+**Vercel 배포본:** https://awesome-finance-research-dashboard.vercel.app/
 
 ---
 
@@ -72,6 +74,13 @@ Vercel 배포본에서는 서버리스 환경에서 로컬 Codex CLI를 실행�
 
 로컬 `localhost`, `127.0.0.1`, `finance.xsw.kr`에서는 API 키가 없으면 기존처럼 Codex CLI를 사용합니다.
 
+### 로컬과 Vercel 차이
+
+| 환경 | URL | AI 실행 방식 | 비고 |
+|------|-----|-------------|------|
+| 로컬 운영 | https://finance.xsw.kr/ | OpenAI API 키가 있으면 BYOK, 없으면 Codex CLI fallback | PM2 + Caddy, 포트 3245 |
+| Vercel | https://awesome-finance-research-dashboard.vercel.app/ | 접속자 브라우저에 저장한 OpenAI API 키만 사용 | Codex CLI 사용 불가, 서버리스 프록시는 키를 저장하지 않음 |
+
 ---
 
 ## 기술 스택
@@ -117,6 +126,22 @@ pm2 start server.js --name finance-dashboard
 
 기본 포트: `3245` (환경변수 `PORT`로 변경 가능)
 
+## Vercel 배포
+
+이 프로젝트는 Vercel에서 정적 프론트엔드와 서버리스 API를 함께 사용합니다.
+
+- `vercel.json`에서 `/api/*` 요청을 `api/index.js`로 라우팅합니다.
+- `api/index.js`는 `server.js`의 `handleRequest()`를 재사용합니다.
+- PM2 로컬 실행에서는 `server.js`가 직접 `server.listen()`을 수행합니다.
+- Vercel에서는 `process.env.VERCEL` 분기로 상시 서버 실행을 하지 않습니다.
+- Vercel 서버리스의 임시 데이터 저장 위치는 `/tmp`입니다.
+
+배포:
+
+```bash
+vercel --prod --yes
+```
+
 ---
 
 ## API 엔드포인트
@@ -134,6 +159,7 @@ pm2 start server.js --name finance-dashboard
 | POST | `/api/sentiment/analyze` | 감성 분석 |
 | POST | `/api/codex/analyze` | Codex CLI 기반 기사·종목 AI 분석 |
 | POST | `/api/codex/report` | Codex CLI 기반 전체 신호 AI 리포트 생성 |
+| POST | `/api/openai/responses` | Vercel/BYOK용 OpenAI Responses API 프록시 |
 | POST | `/api/visualize/chain` | 논리체인 SVG 시각화 |
 | POST | `/api/report/generate` | 리포트 생성 |
 

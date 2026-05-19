@@ -624,7 +624,7 @@ function render() {
 }
 
 function renderSummary() {
-  const signals = state.signals;
+  const signals = filteredSignals();
   const tickers = new Set();
   signals.forEach((signal) => (signal.impact_tickers || []).forEach((ticker) => tickers.add(ticker.ticker || ticker.code)));
   const avgConfidence = signals.length
@@ -632,7 +632,7 @@ function renderSummary() {
     : 0;
 
   $("#generatedAt").textContent = formatDate(state.data?.generated_at);
-  setCounter("#signalCount", Number(state.data?.count ?? signals.length), "integer");
+  setCounter("#signalCount", signals.length, "integer");
   setCounter("#avgConfidence", avgConfidence * 100, "percent");
   setCounter("#tickerCount", tickers.size, "integer");
 }

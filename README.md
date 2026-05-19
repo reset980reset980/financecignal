@@ -36,7 +36,7 @@
 
 ## Codex CLI 연동
 
-뉴스 해석 영역의 **Codex AI 분석** 버튼과 리포트 영역의 **AI 리포트** 버튼은 서버에서 Codex CLI를 비대화형으로 실행합니다.
+로컬 실행본의 **Codex AI 분석** 버튼과 리포트 영역의 **AI 리포트** 버튼은 서버에서 Codex CLI를 비대화형으로 실행합니다.
 
 사용 명령 형태:
 
@@ -53,6 +53,14 @@ codex exec --ephemeral --sandbox read-only -c 'approval_policy="never"' -m "$COD
 | `CODEX_TIMEOUT_MS` | `90000` | 분석 타임아웃 |
 
 서버는 쉘 문자열을 조합하지 않고 `child_process.spawn()` 인자 배열로 실행합니다. Codex 실패 시에는 기존 키워드 기반 해석을 대체 결과로 표시합니다.
+
+## Vercel AI 실행 방식
+
+Vercel 배포본에서는 서버리스 환경에서 로컬 Codex CLI를 실행하지 않습니다.
+
+대신 고급 분석의 **AI API 설정**에 접속자 본인의 OpenAI API 키를 저장하면, 그 브라우저의 `localStorage`에만 보관하고 AI 분석/AI 리포트 실행 시에만 `/api/openai/responses` 프록시로 전달합니다. 키는 서버에 저장하지 않습니다.
+
+로컬 `localhost`, `127.0.0.1`, `finance.xsw.kr`에서는 API 키가 없으면 기존처럼 Codex CLI를 사용합니다.
 
 ---
 

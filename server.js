@@ -1608,6 +1608,19 @@ function analyzeSentiment(text) {
 }
 
 async function analyzeWithCodex(body) {
+  if (process.env.VERCEL) {
+    return {
+      ok: false,
+      provider: "browser-openai-required",
+      summary: "Vercel 배포본에서는 서버에서 Codex CLI를 실행하지 않습니다. 브라우저의 AI API 설정에 접속자 본인의 OpenAI API 키를 저장한 뒤 AI 분석을 실행하세요.",
+      direction: "중립",
+      confidence: 0,
+      key_points: [],
+      risks: ["Vercel 서버리스 환경에는 로컬 Codex CLI 실행 환경이 없습니다."],
+      watch_items: ["고급 분석 > AI API 설정에서 OpenAI API 키와 모델을 저장하세요."],
+      disclaimer: "키는 서버에 저장하지 않고 실행 요청 시에만 OpenAI API 프록시에 전달됩니다."
+    };
+  }
   const text = trimForPrompt(body.text || "", 4200);
   const signal = compactSignalForPrompt(body.signal || {});
   const selectedArticle = compactArticleForPrompt(body.article || {});
@@ -1986,6 +1999,16 @@ function generateReport(signals, title) {
 }
 
 async function generateCodexReport(signals, title) {
+  if (process.env.VERCEL) {
+    const markdown = `# ${title}\n\nVercel 배포본에서는 서버에서 Codex CLI를 실행하지 않습니다.\n\n고급 분석의 AI API 설정에 접속자 본인의 OpenAI API 키를 저장한 뒤 AI 리포트를 실행하세요.\n\n## 주의\n키는 서버에 저장하지 않고 실행 요청 시에만 OpenAI API 프록시에 전달됩니다.\n`;
+    return {
+      ok: false,
+      provider: "browser-openai-required",
+      title,
+      markdown,
+      html: markdownToHtml(markdown)
+    };
+  }
   const startedAt = Date.now();
   const compactSignals = (signals || []).slice(0, 12).map(compactSignalForPrompt);
   if (!compactSignals.length) {

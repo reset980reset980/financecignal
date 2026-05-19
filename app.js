@@ -335,8 +335,18 @@ function hasOpenAIKey() {
   return Boolean(state.openai?.apiKey?.trim());
 }
 
+function isLocalCodexHost() {
+  const host = location.hostname.toLowerCase();
+  return host === "localhost" ||
+    host === "127.0.0.1" ||
+    host === "finance.xsw.kr" ||
+    host.endsWith(".local") ||
+    /^192\.168\./.test(host) ||
+    /^10\./.test(host);
+}
+
 function isVercelHost() {
-  return /\.vercel\.app$/i.test(location.hostname);
+  return !isLocalCodexHost();
 }
 
 function maskedKey(key) {
@@ -355,7 +365,9 @@ function updateOpenAISettingsUI() {
   if (status) {
     status.textContent = hasOpenAIKey()
       ? `저장됨: ${maskedKey(state.openai.apiKey)} · ${state.openai.model || DEFAULT_OPENAI_MODEL}`
-      : "API 키 없음. Vercel에서는 AI 분석/AI 리포트 실행 전 키를 저장하세요.";
+      : isVercelHost()
+        ? "API 키 없음. Vercel 배포본은 접속자 본인 OpenAI API 키를 브라우저에 저장해야 AI 기능을 실행합니다."
+        : "API 키 없음. 로컬에서는 키가 없으면 Codex CLI를 사용합니다.";
   }
 }
 
@@ -1974,11 +1986,11 @@ async function runTool(tool) {
       }
       let data;
       if (hasOpenAIKey()) {
-        setOutput("#sentimentOutput", `${escapeHtml(state.openai.model || DEFAULT_OPENAI_MODEL)}로 기사 맥락과 선택 종목 신호를 분석하는 중입니다. API 키는 브라우저에 저장되고 실행 시에만 OpenAI API 프록시에 전달됩니다.`);
+        setOutput("#sentimentOutput", `${escapeHtml(state.openai.model || DEFAULT_OPENAI_MODEL)}로 기사 맥락과 선택 종목 신호를 분석하는 중입니다. API 키는 이 브라우저에만 저장되고 실행 시에만 OpenAI API 프록시에 전달됩니다.`);
         data = await analyzeWithOpenAIClient(text);
       } else {
         if (isVercelHost()) {
-          setOutput("#sentimentOutput", "Vercel 배포본에서는 OpenAI API 키를 먼저 저장해야 AI 분석을 실행할 수 있습니다. 고급 분석의 AI API 설정에 본인 키를 저장하세요.");
+          setOutput("#sentimentOutput", "Vercel 배포본에서는 접속자 본인의 OpenAI API 키를 먼저 저장해야 AI 분석을 실행할 수 있습니다. 고급 분석의 AI API 설정에 키를 저장하세요. 키는 서버에 저장하지 않습니다.");
           return;
         }
         setOutput("#sentimentOutput", "로컬 Codex CLI로 기사 맥락과 선택 종목 신호를 분석하는 중입니다. 보통 20~90초 정도 걸립니다.");
@@ -2048,11 +2060,11 @@ async function runTool(tool) {
     if (tool === "report-ai") {
       let data;
       if (hasOpenAIKey()) {
-        setOutput("#reportOutput", `${escapeHtml(state.openai.model || DEFAULT_OPENAI_MODEL)}로 전체 신호를 읽고 AI 리포트를 작성하는 중입니다. API 키는 브라우저에 저장되고 실행 시에만 OpenAI API 프록시에 전달됩니다.`);
+        setOutput("#reportOutput", `${escapeHtml(state.openai.model || DEFAULT_OPENAI_MODEL)}로 전체 신호를 읽고 AI 리포트를 작성하는 중입니다. API 키는 이 브라우저에만 저장되고 실행 시에만 OpenAI API 프록시에 전달됩니다.`);
         data = await generateOpenAIReport();
       } else {
         if (isVercelHost()) {
-          setOutput("#reportOutput", "Vercel 배포본에서는 OpenAI API 키를 먼저 저장해야 AI 리포트를 생성할 수 있습니다. 고급 분석의 AI API 설정에 본인 키를 저장하세요.");
+          setOutput("#reportOutput", "Vercel 배포본에서는 접속자 본인의 OpenAI API 키를 먼저 저장해야 AI 리포트를 생성할 수 있습니다. 고급 분석의 AI API 설정에 키를 저장하세요. 키는 서버에 저장하지 않습니다.");
           return;
         }
         setOutput("#reportOutput", "로컬 Codex CLI로 전체 신호를 읽고 AI 리포트를 작성하는 중입니다. 보통 20~90초 정도 걸립니다.");

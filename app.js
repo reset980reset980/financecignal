@@ -1502,18 +1502,7 @@ function renderPredictionMarkets(data) {
     `;
   }).join("");
   if (cards) return `${notice}<div class="prediction-market-list">${cards}</div>`;
-  const links = data.search_links || [];
-  const alternatives = links.map((link) => `
-    <a class="prediction-market-card muted" href="${escapeAttr(link.url || "#")}" target="_blank" rel="noopener noreferrer">
-      <strong>${escapeHtml(link.question_ko || link.question || "대안 검색")}</strong>
-      <span>${escapeHtml(link.event_title_ko || link.event_title || "예측시장 직접 검색")}</span>
-    </a>
-  `).join("");
-  return `
-    ${notice}
-    <div class="tool-notice good">대안: 종목 직접 예측시장이 없어서 예측시장 검색 링크만 제공합니다. 이 결과는 신호 시각화에 자동 반영하지 않습니다.</div>
-    <div class="prediction-market-list">${alternatives || "대안 검색 링크를 만들 수 없습니다."}</div>
-  `;
+  return `${notice}<div class="prediction-market-list">직접 연동 가능한 예측시장 결과가 없습니다. 검색 링크나 범용 시장은 시각화 분석에 사용하지 않습니다.</div>`;
 }
 
 function summarizePredictionMarket(data) {
@@ -1734,8 +1723,8 @@ async function runTool(tool) {
       setOutput("#polyOutput", "예측시장을 불러오는 중입니다.");
       const q = document.querySelector("#polyQuery").value || selectedPredictionQuery();
       const data = await apiGet(`/api/polymarket/markets?limit=8&q=${encodeURIComponent(q)}`);
-      setOutput("#polyOutput", renderPredictionMarkets(data));
       if (!applyPredictionMarketToSelectedSignal(data)) applyStandalonePredictionMarketSignal(data);
+      setOutput("#polyOutput", renderPredictionMarkets(data));
     }
     if (tool === "search") {
       const q = document.querySelector("#searchQuery").value || state.selectedSignal?.title || "금융 시장 뉴스";

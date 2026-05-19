@@ -10,7 +10,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const PORT = Number(process.env.PORT || 3245);
 const CNY_TO_KRW = 218.59;
-const DATA_DIR = path.join(__dirname, "data");
+const DATA_DIR = process.env.VERCEL ? path.join(os.tmpdir(), "finance-dashboard-data") : path.join(__dirname, "data");
 const SIGNAL_STORE = path.join(DATA_DIR, "signals.json");
 const CODEX_COMMAND = process.env.CODEX_COMMAND || "codex";
 const CODEX_MODEL = process.env.CODEX_MODEL || "gpt-5.4-mini";
@@ -92,7 +92,7 @@ function findStockByQuery(query, options = {}) {
 
 await mkdir(DATA_DIR, { recursive: true });
 
-const server = http.createServer(async (req, res) => {
+export async function handleRequest(req, res) {
   try {
     const url = new URL(req.url, `http://${req.headers.host}`);
     if (url.pathname.startsWith("/api/")) {
@@ -103,11 +103,14 @@ const server = http.createServer(async (req, res) => {
   } catch (error) {
     sendJson(res, 500, { error: "서버 오류", detail: error.message });
   }
-});
+}
 
-server.listen(PORT, "127.0.0.1", () => {
-  console.log(`Finance dashboard listening on http://127.0.0.1:${PORT}`);
-});
+if (!process.env.VERCEL) {
+  const server = http.createServer(handleRequest);
+  server.listen(PORT, "127.0.0.1", () => {
+    console.log(`Finance dashboard listening on http://127.0.0.1:${PORT}`);
+  });
+}
 
 async function routeApi(req, res, url) {
   if (req.method === "GET" && url.pathname === "/api/health") {

@@ -57,6 +57,7 @@ const state = {
   chartRequests: new Set(),
   chartErrors: {},
   lastReport: null,
+  process: null,
   openai: loadOpenAISettings(),
   filter: "all",
   query: ""
@@ -67,6 +68,116 @@ const FILTER_LABELS = {
   positive: "상승",
   neutral: "중립",
   negative: "하락"
+};
+
+const PROCESS_PRESETS = {
+  dashboard: {
+    title: "대시보드 초기화",
+    steps: [
+      ["서버 연결", "금융 신호 데이터를 요청합니다."],
+      ["데이터 수신", "신호, 차트, 뉴스 묶음을 불러옵니다."],
+      ["신호 정리", "필터와 선택 종목을 초기화합니다."],
+      ["한국어 정리", "외국어 원문과 금액 표현을 정리합니다."],
+      ["화면 반영", "카드, 차트, 상세 패널을 갱신합니다."]
+    ]
+  },
+  news: {
+    title: "뉴스 흐름 불러오기",
+    steps: [
+      ["소스 확인", "선택한 뉴스 소스를 확인합니다."],
+      ["뉴스 요청", "최신 기사 목록을 요청합니다."],
+      ["목록 정리", "제목과 링크를 화면용으로 정리합니다."],
+      ["결과 표시", "뉴스 흐름 카드에 반영합니다."]
+    ]
+  },
+  polymarket: {
+    title: "예측시장 조회",
+    steps: [
+      ["검색어 구성", "선택 종목과 이슈 키워드를 정리합니다."],
+      ["시장 조회", "예측시장과 대체 검색을 조회합니다."],
+      ["직접 매칭", "선택 종목과 관련 없는 결과를 배제합니다."],
+      ["신호 반영", "직접 매칭된 결과만 시각화에 연결합니다."]
+    ]
+  },
+  search: {
+    title: "기사 검색",
+    steps: [
+      ["검색어 구성", "선택 종목 기준 기사 검색어를 만듭니다."],
+      ["검색 요청", "한국어 기사 검색 결과를 가져옵니다."],
+      ["선택 후보 정리", "기사 선택과 원문 바로가기를 구성합니다."],
+      ["결과 표시", "기사 검색 패널에 반영합니다."]
+    ]
+  },
+  stock: {
+    title: "종목 조회",
+    steps: [
+      ["종목 검색", "입력한 이름 또는 티커를 표준 종목으로 찾습니다."],
+      ["가격 수집", "최근 가격과 일봉 데이터를 수집합니다."],
+      ["기본지표 수집", "기본지표와 보조 정보를 가져옵니다."],
+      ["결과 표시", "종목 조회 결과를 표시합니다."]
+    ]
+  },
+  sentiment: {
+    title: "뉴스 해석",
+    steps: [
+      ["입력 확인", "뉴스 문장 또는 기사 요약을 확인합니다."],
+      ["키워드 분석", "상승/하락 키워드와 문맥을 계산합니다."],
+      ["방향 정리", "해석 방향과 근거를 정리합니다."],
+      ["결과 표시", "뉴스 해석 결과를 표시합니다."]
+    ]
+  },
+  codex: {
+    title: "AI 분석",
+    steps: [
+      ["입력 준비", "기사, 선택 신호, 차트 맥락을 모읍니다."],
+      ["실행 방식 선택", "로컬 Codex CLI 또는 브라우저 OpenAI API를 선택합니다."],
+      ["AI 분석 실행", "핵심 근거, 리스크, 확인 항목을 생성합니다."],
+      ["결과 정리", "JSON 결과를 화면 카드로 변환합니다."]
+    ]
+  },
+  predict: {
+    title: "시장 예측",
+    steps: [
+      ["종목 검색", "입력값을 실제 티커로 변환합니다."],
+      ["가격 수집", "최근 일봉 가격을 가져옵니다."],
+      ["5거래일 예측", "단기 예측선과 신뢰도를 계산합니다."],
+      ["신호 연결", "차트와 신호별 시각화에 반영합니다."]
+    ]
+  },
+  track: {
+    title: "새 근거 반영",
+    steps: [
+      ["선택 신호 확인", "현재 선택한 신호를 확인합니다."],
+      ["근거 분석", "새 기사/공시/가격 근거의 방향을 해석합니다."],
+      ["판단 흐름 갱신", "전달 체인에 새 근거를 추가합니다."],
+      ["화면 반영", "시각화와 상세 패널을 갱신합니다."]
+    ]
+  },
+  visualize: {
+    title: "체인 시각화",
+    steps: [
+      ["신호 확인", "선택 신호의 판단 흐름을 확인합니다."],
+      ["SVG 생성", "전달 체인 그래프를 생성합니다."],
+      ["결과 표시", "시각화 결과를 표시합니다."]
+    ]
+  },
+  report: {
+    title: "리포트 생성",
+    steps: [
+      ["신호 수집", "현재 화면의 신호 목록을 모읍니다."],
+      ["문서 구성", "요약과 신호 목록을 Markdown으로 구성합니다."],
+      ["다운로드 준비", "복사, MD, HTML 버튼을 활성화합니다."]
+    ]
+  },
+  "report-ai": {
+    title: "AI 리포트 생성",
+    steps: [
+      ["신호 압축", "전체 신호를 AI 입력에 맞게 압축합니다."],
+      ["실행 방식 선택", "로컬 Codex CLI 또는 브라우저 OpenAI API를 선택합니다."],
+      ["AI 리포트 작성", "공통 테마, 리스크, 확인 지표를 작성합니다."],
+      ["문서화", "Markdown/HTML 다운로드가 가능하도록 정리합니다."]
+    ]
+  }
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -426,24 +537,36 @@ function syncSelectionWithVisibleSignals() {
 }
 
 async function loadData() {
+  startProcess("dashboard");
   setSync("불러오는 중");
   try {
+    activateProcessStep(0, 35, "서버에서 금융 신호 묶음을 요청하는 중입니다.");
     const response = await fetch(API_URL, { cache: "no-store" });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    completeProcessStep(0, "서버 연결 완료");
+    activateProcessStep(1, 45, "신호, 차트, 뉴스 데이터를 수신하는 중입니다.");
     const data = await response.json();
+    completeProcessStep(1, "데이터 수신 완료");
+    activateProcessStep(2, 45, "신호 목록과 선택 종목 상태를 정리하는 중입니다.");
     state.data = data;
     state.signals = Array.isArray(data.signals) ? data.signals : [];
     state.selectedSignal = null;
     state.selectedTicker = null;
     const predictInput = document.querySelector("#predictTicker");
     if (predictInput) predictInput.value = "";
+    completeProcessStep(2, `${state.signals.length}개 신호 정리 완료`);
     render();
+    activateProcessStep(3, 35, "외국어 원문과 금액 표현을 한국어 화면에 맞게 정리하는 중입니다.");
     setSync("한국어 번역 중");
     localizeData(data).then(() => {
+      completeProcessStep(3, "한국어 정리 완료");
+      completeProcessStep(4, "초기 대시보드 화면 반영 완료");
+      completeProcess("대시보드 준비 완료");
       render();
       setSync("실시간 연결");
     });
   } catch (error) {
+    failProcess(error);
     setSync("연결 실패");
     $("#signalList").innerHTML = `<div class="empty">데이터를 불러오지 못했습니다: ${escapeHtml(error.message)}</div>`;
   }
@@ -565,17 +688,20 @@ function renderFilterCounts() {
 function renderProgressFlow() {
   const container = $("#phaseFlow");
   if (!container) return;
-  const steps = state.data?.workflow?.length ? state.data.workflow : [
-    { label: "의도 파악", detail: "요청 분석 대기", progress: state.data ? 100 : 0 },
-    { label: "한국어 뉴스 수집", detail: "국내 기사 기반 데이터 확인", progress: state.data ? 100 : 0 },
-    { label: "ISQ 신호 점수화", detail: "5축 점수 산출", progress: state.data ? 100 : 0 },
-    { label: "원화 차트·예측", detail: "가격 및 단기 예측 연결", progress: state.data ? 100 : 0 },
-    { label: "리포트 준비", detail: "한글 결과 구성", progress: state.data ? 100 : 0 }
-  ];
+  const steps = currentProcessSteps();
   const total = steps.length ? Math.round(steps.reduce((sum, step) => sum + (Number(step.progress) || 0), 0) / steps.length) : 0;
-  $("#processSummary").textContent = state.data ? `분석 완료 ${total}% · ${state.signals.length}개 신호` : "데이터 수집 전";
+  const active = steps.find((step) => step.status === "active");
+  const failed = steps.find((step) => step.status === "error");
+  const summary = failed
+    ? `${state.process?.title || "진행과정"} 실패 · ${failed.label}`
+    : active
+      ? `${state.process?.title || "진행 중"} ${total}% · ${active.label}`
+      : state.data
+        ? `${state.process?.title || "최근 분석"} ${total}% · ${state.signals.length}개 신호`
+        : "데이터 수집 전";
+  $("#processSummary").textContent = summary;
   container.innerHTML = steps.map((step, index) => `
-    <div class="phase-step-card ${Number(step.progress) >= 100 ? "done" : ""}">
+    <div class="phase-step-card ${phaseStepClass(step)}">
       <div class="phase-index">${index + 1}</div>
       <div>
         <strong>${escapeHtml(step.label || `단계 ${index + 1}`)}</strong>
@@ -585,6 +711,88 @@ function renderProgressFlow() {
       <em>${Math.round(Number(step.progress) || 0)}%</em>
     </div>
   `).join("");
+}
+
+function currentProcessSteps() {
+  if (state.process?.steps?.length) return state.process.steps;
+  if (state.data?.workflow?.length) {
+    return state.data.workflow.map((step) => ({
+      label: step.label,
+      detail: step.detail,
+      progress: Number(step.progress) || 0,
+      status: Number(step.progress) >= 100 ? "done" : "pending"
+    }));
+  }
+  return PROCESS_PRESETS.dashboard.steps.map(([label, detail], index) => ({
+    label,
+    detail,
+    progress: state.data ? 100 : 0,
+    status: state.data ? "done" : index === 0 ? "pending" : "pending"
+  }));
+}
+
+function phaseStepClass(step) {
+  if (step.status === "error") return "error";
+  if (step.status === "active") return "active";
+  if (step.status === "done" || Number(step.progress) >= 100) return "done";
+  return "pending";
+}
+
+function startProcess(key, overrides = {}) {
+  const preset = PROCESS_PRESETS[key];
+  if (!preset) return null;
+  state.process = {
+    key,
+    title: overrides.title || preset.title,
+    steps: preset.steps.map(([label, detail], index) => ({
+      label,
+      detail,
+      progress: index === 0 ? 12 : 0,
+      status: index === 0 ? "active" : "pending"
+    }))
+  };
+  renderProgressFlow();
+  return state.process;
+}
+
+function setProcessStep(index, patch = {}) {
+  if (!state.process?.steps?.[index]) return;
+  state.process.steps[index] = {
+    ...state.process.steps[index],
+    ...patch,
+    progress: clamp(Number(patch.progress ?? state.process.steps[index].progress ?? 0), 0, 100)
+  };
+  renderProgressFlow();
+}
+
+function completeProcessStep(index, detail) {
+  setProcessStep(index, { status: "done", progress: 100, ...(detail ? { detail } : {}) });
+}
+
+function activateProcessStep(index, progress = 35, detail) {
+  setProcessStep(index, { status: "active", progress, ...(detail ? { detail } : {}) });
+}
+
+function completeProcess(detail) {
+  if (!state.process?.steps?.length) return;
+  state.process.steps = state.process.steps.map((step, index) => ({
+    ...step,
+    detail: index === state.process.steps.length - 1 && detail ? detail : step.detail,
+    progress: 100,
+    status: "done"
+  }));
+  renderProgressFlow();
+}
+
+function failProcess(error) {
+  if (!state.process?.steps?.length) return;
+  const activeIndex = state.process.steps.findIndex((step) => step.status === "active");
+  const index = activeIndex >= 0 ? activeIndex : 0;
+  setProcessStep(index, {
+    status: "error",
+    progress: Math.max(8, Number(state.process.steps[index].progress) || 0),
+    detail: `오류: ${error.message || error}`
+  });
 }
 
 function renderVisualFeed() {
@@ -1931,78 +2139,133 @@ async function checkApiHealth() {
 }
 
 async function runTool(tool) {
+  startProcess(tool);
   try {
     if (tool === "news") {
+      activateProcessStep(0, 35, "뉴스 소스를 확인하는 중입니다.");
       setOutput("#newsOutput", "뉴스를 불러오는 중입니다.");
       const source = document.querySelector("#newsSource").value;
+      completeProcessStep(0, "뉴스 소스 확인 완료");
+      activateProcessStep(1, 45, "최신 기사 목록을 요청하는 중입니다.");
       const data = await apiGet(`/api/news/hot?source=${encodeURIComponent(source)}&count=8`);
+      completeProcessStep(1, `${data.items?.length || 0}개 기사 수신`);
+      activateProcessStep(2, 70, "뉴스 링크와 제목을 정리하는 중입니다.");
       setOutput("#newsOutput", `<strong>${escapeHtml(data.source_name)}</strong>${linkList(data.items)}`);
+      completeProcessStep(2, "뉴스 목록 정리 완료");
+      completeProcess("뉴스 흐름 표시 완료");
     }
     if (tool === "polymarket") {
+      activateProcessStep(0, 35, "선택 신호 기준 예측시장 검색어를 구성하는 중입니다.");
       setOutput("#polyOutput", "예측시장을 불러오는 중입니다.");
       const q = document.querySelector("#polyQuery").value || selectedPredictionQuery();
+      completeProcessStep(0, q);
+      activateProcessStep(1, 45, "예측시장 API와 대체 검색을 조회하는 중입니다.");
       const data = await apiGet(`/api/polymarket/markets?limit=8&q=${encodeURIComponent(q)}`);
+      completeProcessStep(1, `${data.markets?.length || 0}개 후보 수신`);
+      activateProcessStep(2, 70, "선택 종목과 직접 연결되는 시장만 필터링하는 중입니다.");
       if (!applyPredictionMarketToSelectedSignal(data)) applyStandalonePredictionMarketSignal(data);
+      completeProcessStep(2, data.direct_match ? "직접 매칭 결과 반영" : "직접 매칭 없음");
+      activateProcessStep(3, 85, "예측시장 결과를 화면에 표시하는 중입니다.");
       setOutput("#polyOutput", renderPredictionMarkets(data));
+      completeProcess("예측시장 조회 완료");
     }
     if (tool === "search") {
+      activateProcessStep(0, 35, "기사 검색어를 구성하는 중입니다.");
       const q = document.querySelector("#searchQuery").value || state.selectedSignal?.title || "금융 시장 뉴스";
+      completeProcessStep(0, q);
+      activateProcessStep(1, 45, "한국어 기사 검색을 요청하는 중입니다.");
       const data = await apiGet(`/api/search?q=${encodeURIComponent(q)}`);
+      completeProcessStep(1, `${data.articles?.length || data.items?.length || 0}개 기사 후보 수신`);
+      activateProcessStep(2, 70, "선택 기사와 원문 바로가기 버튼을 구성하는 중입니다.");
       setOutput("#searchOutput", renderSearchResults(data));
+      completeProcessStep(2, "기사 선택 후보 정리 완료");
+      completeProcess("기사 검색 결과 표시 완료");
     }
     if (tool === "stock") {
+      activateProcessStep(0, 35, "종목명 또는 티커를 검색하는 중입니다.");
       const q = document.querySelector("#stockQuery").value || "삼성전자";
       const found = await apiGet(`/api/stock/search?q=${encodeURIComponent(q)}`);
       if (!found.results?.length) {
+        failProcess(new Error(`검색 결과가 없습니다: ${q}`));
         setOutput("#stockOutput", `검색 결과가 없습니다: ${escapeHtml(q)}<br><small>종목명, 티커, 영문 회사명으로 다시 검색해보세요.</small>`);
         return;
       }
+      completeProcessStep(0, `${found.results[0]?.name || found.results[0]?.ticker || q} 선택`);
       const ticker = found.results[0]?.ticker || q;
+      activateProcessStep(1, 45, "최근 가격과 일봉 데이터를 수집하는 중입니다.");
+      activateProcessStep(2, 25, "기본지표를 함께 수집하는 중입니다.");
       const [price, fundamentals] = await Promise.all([
         apiGet(`/api/stock/price?ticker=${encodeURIComponent(ticker)}&days=30`),
         apiGet(`/api/stock/fundamentals?ticker=${encodeURIComponent(ticker)}`)
       ]);
+      completeProcessStep(1, "가격 데이터 수집 완료");
+      completeProcessStep(2, "기본지표 수집 완료");
+      activateProcessStep(3, 85, "종목 조회 결과를 렌더링하는 중입니다.");
       setOutput("#stockOutput", renderStockLookup(found, price, fundamentals, ticker));
+      completeProcess("종목 조회 완료");
     }
     if (tool === "sentiment") {
+      activateProcessStep(0, 35, "뉴스 문장 또는 선택 기사 요약을 확인하는 중입니다.");
       const text = document.querySelector("#sentimentText").value || articleInputText(state.selectedArticle) || state.selectedSignal?.summary || "";
       if (!text.trim()) {
+        failProcess(new Error("뉴스 문장이나 기사 요약이 없습니다."));
         setOutput("#sentimentOutput", "뉴스 문장이나 기사 요약을 입력하세요.");
         return;
       }
+      completeProcessStep(0, "분석 입력 확인 완료");
+      activateProcessStep(1, 50, "상승/하락 키워드와 문맥을 분석하는 중입니다.");
       const data = await apiPost("/api/sentiment/analyze", { text });
+      completeProcessStep(1, "키워드 분석 완료");
+      activateProcessStep(2, 75, "방향성과 근거를 정리하는 중입니다.");
       const tone = sentimentTone(data);
       const matched = [
         data.matched_positive?.length ? `상승 쪽 키워드: ${data.matched_positive.join(", ")}` : "",
         data.matched_negative?.length ? `하락 쪽 키워드: ${data.matched_negative.join(", ")}` : ""
       ].filter(Boolean).map(escapeHtml).join("<br>");
+      completeProcessStep(2, `${tone.label} 방향으로 정리`);
+      activateProcessStep(3, 90, "뉴스 해석 결과를 화면에 표시하는 중입니다.");
       setOutput("#sentimentOutput", `<strong class="inline-mood ${tone.className}">뉴스 해석: ${escapeHtml(tone.label)}</strong><br>${escapeHtml(data.reason || "입력 문장을 기준으로 방향성을 해석했습니다.")}${matched ? `<br>${matched}` : ""}`);
+      completeProcess("뉴스 해석 완료");
     }
     if (tool === "codex") {
+      activateProcessStep(0, 35, "기사, 선택 신호, 차트 맥락을 모으는 중입니다.");
       const text = document.querySelector("#sentimentText").value || articleInputText(state.selectedArticle) || state.selectedSignal?.summary || "";
       if (!text.trim() && !state.selectedSignal) {
+        failProcess(new Error("AI 분석 입력이 없습니다."));
         setOutput("#sentimentOutput", "AI 분석에 사용할 기사나 선택 종목 정보가 없습니다.");
         return;
       }
+      completeProcessStep(0, "AI 분석 입력 준비 완료");
       let data;
       if (hasOpenAIKey()) {
+        activateProcessStep(1, 60, "브라우저에 저장된 OpenAI API 키로 실행합니다.");
         setOutput("#sentimentOutput", `${escapeHtml(state.openai.model || DEFAULT_OPENAI_MODEL)}로 기사 맥락과 선택 종목 신호를 분석하는 중입니다. API 키는 이 브라우저에만 저장되고 실행 시에만 OpenAI API 프록시에 전달됩니다.`);
+        completeProcessStep(1, "OpenAI API 실행 방식 선택");
+        activateProcessStep(2, 45, "OpenAI API 분석을 실행하는 중입니다.");
         data = await analyzeWithOpenAIClient(text);
       } else {
         if (isVercelHost()) {
+          failProcess(new Error("Vercel 배포본은 OpenAI API 키 저장이 필요합니다."));
           setOutput("#sentimentOutput", "Vercel 배포본에서는 접속자 본인의 OpenAI API 키를 먼저 저장해야 AI 분석을 실행할 수 있습니다. 위치: 고급 분석 > AI API 설정 > OpenAI API 키 입력 > 저장. 키는 서버에 저장하지 않습니다.");
           return;
         }
+        activateProcessStep(1, 60, "로컬 Codex CLI 실행 방식으로 분석합니다.");
         setOutput("#sentimentOutput", "로컬 Codex CLI로 기사 맥락과 선택 종목 신호를 분석하는 중입니다. 보통 20~90초 정도 걸립니다.");
+        completeProcessStep(1, "Codex CLI 실행 방식 선택");
+        activateProcessStep(2, 45, "Codex CLI 분석을 실행하는 중입니다.");
         data = await apiPost("/api/codex/analyze", {
           text,
           article: state.selectedArticle || {},
           signal: state.selectedSignal || {}
         });
       }
+      completeProcessStep(2, "AI 분석 결과 수신 완료");
+      activateProcessStep(3, 85, "AI 분석 결과를 화면 카드로 정리하는 중입니다.");
       setOutput("#sentimentOutput", renderCodexAnalysis(data));
+      completeProcess("AI 분석 완료");
     }
     if (tool === "predict") {
+      activateProcessStep(0, 35, "입력값을 실제 종목 티커로 변환하는 중입니다.");
       const rawTicker = document.querySelector("#predictTicker").value || state.selectedTicker || "005930.KS";
       setOutput("#predictOutput", "종목을 찾고 예측 차트를 생성하는 중입니다.");
       let ticker = rawTicker;
@@ -2010,6 +2273,7 @@ async function runTool(tool) {
       try {
         found = await apiGet(`/api/stock/search?q=${encodeURIComponent(rawTicker)}`);
         if (!found.results?.length) {
+          failProcess(new Error(`검색 결과가 없습니다: ${rawTicker}`));
           setOutput("#predictOutput", `검색 결과가 없습니다: ${escapeHtml(rawTicker)}<br><small>종목명, 티커, 영문 회사명으로 다시 입력해보세요.</small>`);
           return;
         }
@@ -2017,21 +2281,34 @@ async function runTool(tool) {
       } catch {
         ticker = rawTicker;
       }
+      completeProcessStep(0, `분석 티커: ${ticker}`);
+      activateProcessStep(1, 45, "최근 일봉 가격 데이터를 수집하는 중입니다.");
       const data = await apiGet(`/api/predict?ticker=${encodeURIComponent(ticker)}&days=5`);
+      completeProcessStep(1, "가격 데이터 수집 완료");
+      completeProcessStep(2, `${horizonLabel(data.expected_horizon || "T+5")} 예측 계산 완료`);
+      activateProcessStep(3, 75, "예측 결과를 신호와 차트에 연결하는 중입니다.");
       const linkedSignal = applyPredictionToSignal(data);
       setOutput("#predictOutput", renderMarketPredictionResult(found, data, linkedSignal));
+      completeProcess("시장 예측 반영 완료");
     }
     if (tool === "track") {
+      activateProcessStep(0, 35, "현재 선택된 신호를 확인하는 중입니다.");
       if (!state.selectedSignal) {
+        failProcess(new Error("선택 신호가 없습니다."));
         setOutput("#trackOutput", "먼저 시장 예측을 만들거나 아래 신호 카드를 선택하세요.");
         return;
       }
+      completeProcessStep(0, state.selectedSignal.title || "선택 신호 확인 완료");
       const newInfo = document.querySelector("#trackText").value || articleInputText(state.selectedArticle) || "";
       if (!newInfo.trim()) {
+        failProcess(new Error("새 근거 입력이 없습니다."));
         setOutput("#trackOutput", "판단 흐름에 추가할 새 기사, 공시, 가격 근거를 입력하세요.");
         return;
       }
+      activateProcessStep(1, 50, "새 근거의 상승/하락 방향을 해석하는 중입니다.");
       const data = await apiPost("/api/sentiment/analyze", { text: newInfo });
+      completeProcessStep(1, "새 근거 분석 완료");
+      activateProcessStep(2, 75, "판단 흐름에 새 근거 노드를 추가하는 중입니다.");
       const tone = sentimentTone(data);
       const chain = Array.isArray(state.selectedSignal.transmission_chain) ? [...state.selectedSignal.transmission_chain] : [];
       const node = {
@@ -2043,41 +2320,69 @@ async function runTool(tool) {
       if (index >= 0) chain[index] = node;
       else chain.push(node);
       state.selectedSignal.transmission_chain = chain;
+      completeProcessStep(2, "판단 흐름 갱신 완료");
+      activateProcessStep(3, 90, "시각화와 상세 패널을 갱신하는 중입니다.");
       setOutput("#trackOutput", `<strong class="inline-mood ${tone.className}">판단 흐름에 새 근거를 추가했습니다: ${escapeHtml(tone.label)}</strong><br>예측 확실성은 자동 변경하지 않았습니다.<br>${escapeHtml(data.reason || "새 근거를 선택 종목의 판단 흐름에만 반영했습니다.")}`);
       renderVisualFeed();
       renderDetail();
+      completeProcess("새 근거 반영 완료");
     }
     if (tool === "visualize") {
+      activateProcessStep(0, 35, "선택 신호의 판단 흐름을 확인하는 중입니다.");
+      completeProcessStep(0, state.selectedSignal ? "선택 신호 확인 완료" : "선택 신호 없음");
+      activateProcessStep(1, 55, "판단 흐름 SVG를 생성하는 중입니다.");
       const data = await apiPost("/api/visualize/chain", { signal: state.selectedSignal || {} });
+      completeProcessStep(1, "SVG 생성 완료");
+      activateProcessStep(2, 90, "시각화 결과를 표시하는 중입니다.");
       setOutput("#visualOutput", data.svg || "시각화할 체인이 없습니다.");
+      completeProcess("체인 시각화 완료");
     }
     if (tool === "report") {
+      activateProcessStep(0, 35, `${state.signals.length}개 신호를 리포트 입력으로 모으는 중입니다.`);
+      completeProcessStep(0, "신호 수집 완료");
+      activateProcessStep(1, 55, "Markdown 리포트를 구성하는 중입니다.");
       const data = await apiPost("/api/report/generate", { signals: state.signals, title: "Finance Signal Radar 리포트" });
+      completeProcessStep(1, "Markdown 리포트 생성 완료");
       state.lastReport = data;
+      activateProcessStep(2, 85, "복사와 다운로드 버튼을 활성화하는 중입니다.");
       setReportActionsEnabled(true);
       setOutput("#reportOutput", escapeHtml(data.markdown));
+      completeProcess("리포트 생성 완료");
     }
     if (tool === "report-ai") {
+      activateProcessStep(0, 35, `${state.signals.length}개 신호를 AI 입력에 맞게 압축하는 중입니다.`);
+      completeProcessStep(0, "신호 압축 완료");
       let data;
       if (hasOpenAIKey()) {
+        activateProcessStep(1, 60, "브라우저에 저장된 OpenAI API 키로 실행합니다.");
         setOutput("#reportOutput", `${escapeHtml(state.openai.model || DEFAULT_OPENAI_MODEL)}로 전체 신호를 읽고 AI 리포트를 작성하는 중입니다. API 키는 이 브라우저에만 저장되고 실행 시에만 OpenAI API 프록시에 전달됩니다.`);
+        completeProcessStep(1, "OpenAI API 실행 방식 선택");
+        activateProcessStep(2, 45, "AI 리포트를 작성하는 중입니다.");
         data = await generateOpenAIReport();
       } else {
         if (isVercelHost()) {
+          failProcess(new Error("Vercel 배포본은 OpenAI API 키 저장이 필요합니다."));
           setOutput("#reportOutput", "Vercel 배포본에서는 접속자 본인의 OpenAI API 키를 먼저 저장해야 AI 리포트를 생성할 수 있습니다. 위치: 고급 분석 > AI API 설정 > OpenAI API 키 입력 > 저장. 키는 서버에 저장하지 않습니다.");
           return;
         }
+        activateProcessStep(1, 60, "로컬 Codex CLI 실행 방식으로 작성합니다.");
         setOutput("#reportOutput", "로컬 Codex CLI로 전체 신호를 읽고 AI 리포트를 작성하는 중입니다. 보통 20~90초 정도 걸립니다.");
+        completeProcessStep(1, "Codex CLI 실행 방식 선택");
+        activateProcessStep(2, 45, "Codex CLI로 AI 리포트를 작성하는 중입니다.");
         data = await apiPost("/api/codex/report", { signals: state.signals, title: "Finance Signal Radar AI 리포트" });
       }
+      completeProcessStep(2, "AI 리포트 작성 완료");
       state.lastReport = data;
+      activateProcessStep(3, 85, "Markdown/HTML 문서로 정리하는 중입니다.");
       setReportActionsEnabled(true);
       setOutput("#reportOutput", escapeHtml(data.markdown));
+      completeProcess("AI 리포트 생성 완료");
     }
     if (tool === "report-copy") await copyReport();
     if (tool === "report-download-md") downloadReport("md");
     if (tool === "report-download-html") downloadReport("html");
   } catch (error) {
+    failProcess(error);
     const outputMap = {
       polymarket: "#polyOutput",
       news: "#newsOutput",

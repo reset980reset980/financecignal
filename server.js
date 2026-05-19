@@ -212,6 +212,11 @@ async function routeApi(req, res, url) {
     sendJson(res, 200, await generateCodexReport(body.signals || [], body.title || "Finance Signal Radar AI 리포트"));
     return;
   }
+  if (req.method === "POST" && url.pathname === "/api/openai/responses") {
+    const body = await readBody(req);
+    sendJson(res, 200, await proxyOpenAIResponse(body));
+    return;
+  }
   if (req.method === "GET" && url.pathname === "/api/translate") {
     const text = url.searchParams.get("text") || "";
     sendJson(res, 200, { text, translated: await translate(text) });
@@ -2046,6 +2051,32 @@ function normalizeCodexMarkdown(raw, title) {
     ? ""
     : "\n\n## 주의\n본 리포트는 공개 데이터 기반 분석 보조이며 투자 조언이 아닙니다.";
   return `${header}${notice}\n`;
+}
+
+async function proxyOpenAIResponse(body) {
+  const apiKey = String(body.apiKey || "").trim();
+  if (!apiKey) throw new Error("OpenAI API 키가 없습니다.");
+  const payload = body.payload || {};
+  const response = await fetch("https://api.openai.com/v1/responses", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "authorization": `Bearer ${apiKey}`
+    },
+    body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(90000)
+  });
+  const text = await response.text();
+  let data;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    data = { raw: text };
+  }
+  if (!response.ok) {
+    throw new Error(data?.error?.message || `OpenAI API ${response.status}`);
+  }
+  return data;
 }
 
 async function translate(text) {

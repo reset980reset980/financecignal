@@ -1,6 +1,8 @@
 const API_URL = "/api/korea/dashboard";
 const CNY_TO_KRW = 218.59;
 const TRANSLATE_URL = "https://translate.googleapis.com/translate_a/single";
+const OPENAI_SETTINGS_KEY = "financeOpenAISettings.v1";
+const DEFAULT_OPENAI_MODEL = "gpt-5-mini";
 const translationCache = new Map(JSON.parse(localStorage.getItem("financeTranslationCache.v1") || "[]"));
 
 const KO_TEXT = new Map([
@@ -55,6 +57,7 @@ const state = {
   chartRequests: new Set(),
   chartErrors: {},
   lastReport: null,
+  openai: loadOpenAISettings(),
   filter: "all",
   query: ""
 };
@@ -299,6 +302,77 @@ function codexTone(data) {
 function shortText(value, max = 150) {
   const text = String(value || "").trim().replace(/\s+/g, " ");
   return text.length > max ? `${text.slice(0, max - 1)}...` : text;
+}
+
+function loadOpenAISettings() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(OPENAI_SETTINGS_KEY) || "{}");
+    return {
+      apiKey: String(parsed.apiKey || ""),
+      model: String(parsed.model || DEFAULT_OPENAI_MODEL)
+    };
+  } catch {
+    return { apiKey: "", model: DEFAULT_OPENAI_MODEL };
+  }
+}
+
+function saveOpenAISettings(settings) {
+  state.openai = {
+    apiKey: String(settings.apiKey || "").trim(),
+    model: String(settings.model || DEFAULT_OPENAI_MODEL).trim() || DEFAULT_OPENAI_MODEL
+  };
+  localStorage.setItem(OPENAI_SETTINGS_KEY, JSON.stringify(state.openai));
+  updateOpenAISettingsUI();
+}
+
+function clearOpenAISettings() {
+  state.openai = { apiKey: "", model: DEFAULT_OPENAI_MODEL };
+  localStorage.removeItem(OPENAI_SETTINGS_KEY);
+  updateOpenAISettingsUI();
+}
+
+function hasOpenAIKey() {
+  return Boolean(state.openai?.apiKey?.trim());
+}
+
+function isVercelHost() {
+  return /\.vercel\.app$/i.test(location.hostname);
+}
+
+function maskedKey(key) {
+  const value = String(key || "");
+  if (!value) return "";
+  if (value.length <= 10) return "저장됨";
+  return `${value.slice(0, 7)}...${value.slice(-4)}`;
+}
+
+function updateOpenAISettingsUI() {
+  const keyInput = $("#openaiApiKey");
+  const modelInput = $("#openaiModel");
+  const status = $("#openaiKeyStatus");
+  if (keyInput) keyInput.value = state.openai.apiKey || "";
+  if (modelInput) modelInput.value = state.openai.model || DEFAULT_OPENAI_MODEL;
+  if (status) {
+    status.textContent = hasOpenAIKey()
+      ? `저장됨: ${maskedKey(state.openai.apiKey)} · ${state.openai.model || DEFAULT_OPENAI_MODEL}`
+      : "API 키 없음. Vercel에서는 AI 분석/AI 리포트 실행 전 키를 저장하세요.";
+  }
+}
+
+function initOpenAISettingsUI() {
+  updateOpenAISettingsUI();
+  document.querySelectorAll("[data-openai-action]").forEach((button) => {
+    button.addEventListener("click", () => {
+      if (button.dataset.openaiAction === "clear") {
+        clearOpenAISettings();
+        return;
+      }
+      saveOpenAISettings({
+        apiKey: $("#openaiApiKey")?.value || "",
+        model: $("#openaiModel")?.value || DEFAULT_OPENAI_MODEL
+      });
+    });
+  });
 }
 
 function textCorpus(signal) {
@@ -1150,6 +1224,7 @@ document.querySelectorAll(".filters button").forEach((button) => {
 });
 
 initRevealObserver();
+initOpenAISettingsUI();
 loadData();
 
 async function apiGet(path) {
@@ -1164,8 +1239,9 @@ async function apiPost(path, body) {
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body)
   });
-  if (!response.ok) throw new Error(`API ${response.status}`);
-  return response.json();
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.detail || data.error || `API ${response.status}`);
+  return data;
 }
 
 function setOutput(selector, html) {
@@ -1348,6 +1424,136 @@ function renderMarketPredictionResult(found, data, linkedSignal) {
   `;
 }
 
+function openAIResponseText(data) {
+  if (typeof data?.output_text === "string") return data.output_text;
+  const chunks = [];
+  for (const item of data?.output || []) {
+    for (const content of item.content || []) {
+      if (typeof content.text === "string") chunks.push(content.text);
+    }
+  }
+  return chunks.join("\n").trim();
+}
+
+function parseJsonObject(text) {
+  const raw = String(text || "").trim();
+  try {
+    return JSON.parse(raw);
+  } catch {
+    const match = raw.match(/\{[\s\S]*\}/);
+    if (match) return JSON.parse(match[0]);
+    throw new Error("AI 응답을 JSON으로 해석하지 못했습니다.");
+  }
+}
+
+async function callOpenAIResponse({ system, prompt, maxOutputTokens = 1200 }) {
+  if (!hasOpenAIKey()) throw new Error("OpenAI API 키를 먼저 저장하세요.");
+  const data = await apiPost("/api/openai/responses", {
+    apiKey: state.openai.apiKey,
+    payload: {
+      model: state.openai.model || DEFAULT_OPENAI_MODEL,
+      input: [
+        { role: "system", content: system },
+        { role: "user", content: prompt }
+      ],
+      max_output_tokens: maxOutputTokens
+    }
+  });
+  const text = openAIResponseText(data);
+  if (!text) throw new Error("OpenAI API가 빈 응답을 반환했습니다.");
+  return { text, raw: data };
+}
+
+function selectedAiContext(text) {
+  return JSON.stringify({
+    input_text: text,
+    selected_article: state.selectedArticle || null,
+    selected_signal: state.selectedSignal || null,
+    selected_ticker: state.selectedTicker || null,
+    chart: state.selectedTicker ? state.data?.charts?.[state.selectedTicker] || null : null
+  }, null, 2);
+}
+
+async function analyzeWithOpenAIClient(text) {
+  const { text: output } = await callOpenAIResponse({
+    system: "너는 한국 금융시장 뉴스와 가격 신호를 분석하는 애널리스트다. 투자 조언이 아니라 분석 보조 정보만 제공한다. 반드시 JSON 객체 하나만 출력한다.",
+    prompt: `아래 자료를 바탕으로 선택 종목에 대한 방향성을 한국어로 분석해라.
+
+JSON 필드:
+- ok: true
+- provider: "openai-api"
+- model: 사용 모델명
+- direction: "상승" | "하락" | "중립"
+- confidence: 0~100 숫자
+- summary: 2문장 이하
+- key_points: 핵심 근거 배열 3~5개
+- risks: 리스크 배열 2~4개
+- watch_items: 추가 확인 항목 배열 2~4개
+- disclaimer: "본 결과는 분석 보조이며 투자 조언이 아닙니다."
+
+자료:
+${selectedAiContext(text)}`,
+    maxOutputTokens: 1400
+  });
+  return {
+    ok: true,
+    provider: "openai-api",
+    model: state.openai.model || DEFAULT_OPENAI_MODEL,
+    ...parseJsonObject(output)
+  };
+}
+
+function compactSignalsForAi(signals) {
+  return (signals || []).slice(0, 15).map((signal) => ({
+    title: displayText(signal.title),
+    summary: displayText(signal.summary),
+    reasoning: displayText(signal.reasoning),
+    sentiment_score: signal.sentiment_score,
+    confidence: signal.confidence,
+    intensity: signal.intensity,
+    expected_horizon: signal.expected_horizon,
+    prediction_summary: signal.prediction_summary,
+    prediction_market_summary: signal.prediction_market_summary,
+    impact_tickers: signal.impact_tickers,
+    chain: (signal.transmission_chain || []).map((node) => ({
+      node_name: displayText(node.node_name),
+      impact_type: impactLabel(node.impact_type),
+      logic: displayText(node.logic)
+    }))
+  }));
+}
+
+async function generateOpenAIReport() {
+  const title = "Finance Signal Radar AI 리포트";
+  const { text } = await callOpenAIResponse({
+    system: "너는 한국어 금융 리서치 리포트를 작성하는 애널리스트다. 과장 없이 근거와 한계를 분리한다. 출력은 Markdown만 사용한다.",
+    prompt: `다음 자동 수집 신호를 바탕으로 한국어 Markdown 리포트를 작성해라.
+
+포함할 섹션:
+# ${title}
+## 핵심 요약
+## 주요 상승/하락 신호
+## 종목별 관찰 포인트
+## 예측시장/가격 예측 반영
+## 리스크와 확인 필요 사항
+## 주의
+
+주의 섹션에는 "본 리포트는 투자 조언이 아니며 공개 데이터와 사용자의 API 키로 생성된 분석 보조 자료입니다."를 포함해라.
+
+신호 데이터:
+${JSON.stringify(compactSignalsForAi(state.signals), null, 2)}`,
+    maxOutputTokens: 3000
+  });
+  return {
+    ok: true,
+    title,
+    markdown: text,
+    html: markdownToSafeHtml(text),
+    provider: "openai-api",
+    model: state.openai.model || DEFAULT_OPENAI_MODEL
+  };
+}
+
 function renderCodexAnalysis(data) {
   const tone = codexTone(data);
   const list = (items) => (items || []).map((item) => `<li>${escapeHtml(item)}</li>`).join("");
@@ -1362,7 +1568,8 @@ function renderCodexAnalysis(data) {
       ${data.risks?.length ? `<h4>리스크</h4><ul>${list(data.risks)}</ul>` : ""}
       ${data.watch_items?.length ? `<h4>확인할 것</h4><ul>${list(data.watch_items)}</ul>` : ""}
       <small>${escapeHtml(data.disclaimer || "본 결과는 분석 보조이며 투자 조언이 아닙니다.")}</small>
-      ${data.ok ? "" : `<div class="tool-notice">${escapeHtml("Codex CLI 응답 실패로 대체 해석을 표시했습니다.")}</div>`}
+      <small>${escapeHtml(data.provider === "openai-api" ? `OpenAI API · ${data.model || ""}` : data.provider || "Codex CLI")}</small>
+      ${data.ok ? "" : `<div class="tool-notice">${escapeHtml("AI 응답 실패로 대체 해석을 표시했습니다.")}</div>`}
     </div>
   `;
 }
@@ -1762,15 +1969,25 @@ async function runTool(tool) {
     if (tool === "codex") {
       const text = document.querySelector("#sentimentText").value || articleInputText(state.selectedArticle) || state.selectedSignal?.summary || "";
       if (!text.trim() && !state.selectedSignal) {
-        setOutput("#sentimentOutput", "Codex AI 분석에 사용할 기사나 선택 종목 정보가 없습니다.");
+        setOutput("#sentimentOutput", "AI 분석에 사용할 기사나 선택 종목 정보가 없습니다.");
         return;
       }
-      setOutput("#sentimentOutput", "Codex CLI로 기사 맥락과 선택 종목 신호를 분석하는 중입니다. 보통 20~90초 정도 걸립니다.");
-      const data = await apiPost("/api/codex/analyze", {
-        text,
-        article: state.selectedArticle || {},
-        signal: state.selectedSignal || {}
-      });
+      let data;
+      if (hasOpenAIKey()) {
+        setOutput("#sentimentOutput", `${escapeHtml(state.openai.model || DEFAULT_OPENAI_MODEL)}로 기사 맥락과 선택 종목 신호를 분석하는 중입니다. API 키는 브라우저에 저장되고 실행 시에만 OpenAI API 프록시에 전달됩니다.`);
+        data = await analyzeWithOpenAIClient(text);
+      } else {
+        if (isVercelHost()) {
+          setOutput("#sentimentOutput", "Vercel 배포본에서는 OpenAI API 키를 먼저 저장해야 AI 분석을 실행할 수 있습니다. 고급 분석의 AI API 설정에 본인 키를 저장하세요.");
+          return;
+        }
+        setOutput("#sentimentOutput", "로컬 Codex CLI로 기사 맥락과 선택 종목 신호를 분석하는 중입니다. 보통 20~90초 정도 걸립니다.");
+        data = await apiPost("/api/codex/analyze", {
+          text,
+          article: state.selectedArticle || {},
+          signal: state.selectedSignal || {}
+        });
+      }
       setOutput("#sentimentOutput", renderCodexAnalysis(data));
     }
     if (tool === "predict") {
@@ -1829,8 +2046,18 @@ async function runTool(tool) {
       setOutput("#reportOutput", escapeHtml(data.markdown));
     }
     if (tool === "report-ai") {
-      setOutput("#reportOutput", "Codex CLI로 전체 신호를 읽고 AI 리포트를 작성하는 중입니다. 보통 20~90초 정도 걸립니다.");
-      const data = await apiPost("/api/codex/report", { signals: state.signals, title: "Finance Signal Radar AI 리포트" });
+      let data;
+      if (hasOpenAIKey()) {
+        setOutput("#reportOutput", `${escapeHtml(state.openai.model || DEFAULT_OPENAI_MODEL)}로 전체 신호를 읽고 AI 리포트를 작성하는 중입니다. API 키는 브라우저에 저장되고 실행 시에만 OpenAI API 프록시에 전달됩니다.`);
+        data = await generateOpenAIReport();
+      } else {
+        if (isVercelHost()) {
+          setOutput("#reportOutput", "Vercel 배포본에서는 OpenAI API 키를 먼저 저장해야 AI 리포트를 생성할 수 있습니다. 고급 분석의 AI API 설정에 본인 키를 저장하세요.");
+          return;
+        }
+        setOutput("#reportOutput", "로컬 Codex CLI로 전체 신호를 읽고 AI 리포트를 작성하는 중입니다. 보통 20~90초 정도 걸립니다.");
+        data = await apiPost("/api/codex/report", { signals: state.signals, title: "Finance Signal Radar AI 리포트" });
+      }
       state.lastReport = data;
       setReportActionsEnabled(true);
       setOutput("#reportOutput", escapeHtml(data.markdown));

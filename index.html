@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Finance Signal Radar</title>
-    <link rel="stylesheet" href="./styles.css?v=20" />
+    <link rel="stylesheet" href="./styles.css?v=21" />
   </head>
   <body>
     <div class="scroll-gauge" aria-hidden="true">
@@ -141,6 +141,26 @@
               </div>
               <div id="reportOutput" class="tool-output report-output"></div>
             </article>
+
+            <article>
+              <h3>AI API 설정</h3>
+              <div class="api-key-form">
+                <label>
+                  <span>OpenAI API 키</span>
+                  <input id="openaiApiKey" type="password" placeholder="sk-... 또는 프로젝트 키" autocomplete="off" />
+                </label>
+                <label>
+                  <span>모델</span>
+                  <input id="openaiModel" placeholder="gpt-5-mini" />
+                </label>
+                <div class="button-row">
+                  <button type="button" data-openai-action="save">저장</button>
+                  <button type="button" class="secondary-action" data-openai-action="clear">삭제</button>
+                </div>
+                <small id="openaiKeyStatus">브라우저에만 저장됩니다.</small>
+              </div>
+              <div class="tool-output">Vercel 배포본의 AI 분석과 AI 리포트는 여기에 저장한 접속자 본인 키를 실행할 때만 서버리스 프록시로 보내 OpenAI API에 중계합니다. 키는 서버에 저장하지 않습니다.</div>
+            </article>
           </div>
         </details>
       </section>
@@ -261,6 +281,6 @@
       </section>
     </main>
 
-    <script src="./app.js?v=33"></script>
+    <script src="./app.js?v=36"></script>
   </body>
 </html>

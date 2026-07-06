@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Finance Signal Radar</title>
-    <link rel="stylesheet" href="./styles.css?v=21" />
+    <link rel="stylesheet" href="./styles.css?v=23" />
   </head>
   <body>
     <div class="scroll-gauge" aria-hidden="true">
@@ -157,14 +157,11 @@
                   <button type="button" data-openai-action="save">저장</button>
                   <button type="button" class="secondary-action" data-openai-action="clear">삭제</button>
                 </div>
-                <small id="openaiKeyStatus">브라우저에만 저장됩니다.</small>
+                <small id="openaiKeyStatus">서버 키가 있으면 입력 없이 실행됩니다.</small>
               </div>
               <div class="tool-output">
-                Vercel 배포본에서 AI 기능을 쓰려면 여기에서 설정합니다.<br>
-                1. OpenAI API 키 입력<br>
-                2. 모델 확인 또는 변경<br>
-                3. 저장 버튼 클릭<br>
-                4. 아래의 AI 분석 또는 AI 리포트 실행<br><br>
+                운영 서버의 OpenAI API 키가 우선 사용됩니다.<br>
+                개인 키를 쓰거나 서버 키가 없는 배포본에서는 여기에서 키를 저장하세요.<br>
                 키는 이 브라우저에만 저장되고, 서버에는 저장하지 않습니다.
               </div>
             </article>
@@ -271,7 +268,7 @@
                 <textarea id="sentimentText" rows="4" placeholder="뉴스 문장이나 기사 요약을 붙여넣으면 상승/하락 쪽 해석만 확인합니다."></textarea>
                 <div class="context-actions">
                   <button type="button" data-tool="sentiment">뉴스 해석</button>
-                  <button type="button" class="secondary-action" data-tool="codex">AI 분석</button>
+                  <button type="button" class="secondary-action" data-tool="ai">AI 분석</button>
                 </div>
                 <div id="sentimentOutput" class="tool-output context-output">분석할 뉴스 문장을 입력하세요.</div>
               </div>
@@ -288,6 +285,7 @@
       </section>
     </main>
 
-    <script src="./app.js?v=36"></script>
+    <script src="./app.js?v=40"></script>
+    <script src="./ta.js?v=6"></script>
   </body>
 </html>

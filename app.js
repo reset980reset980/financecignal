@@ -3,6 +3,7 @@ const CNY_TO_KRW = 218.59;
 const TRANSLATE_URL = "https://translate.googleapis.com/translate_a/single";
 const OPENAI_SETTINGS_KEY = "financeOpenAISettings.v1";
 const DEFAULT_OPENAI_MODEL = "gpt-5-mini";
+const OPENAI_STOCK_CACHE_TTL_MS = 4 * 60 * 60 * 1000;
 const translationCache = new Map(JSON.parse(localStorage.getItem("financeTranslationCache.v1") || "[]"));
 
 const KO_TEXT = new Map([
@@ -126,11 +127,11 @@ const PROCESS_PRESETS = {
       ["결과 표시", "뉴스 해석 결과를 표시합니다."]
     ]
   },
-  codex: {
+  ai: {
     title: "AI 분석",
     steps: [
       ["입력 준비", "기사, 선택 신호, 차트 맥락을 모읍니다."],
-      ["실행 방식 선택", "로컬 Codex CLI 또는 브라우저 OpenAI API를 선택합니다."],
+      ["OpenAI API 준비", "서버 또는 브라우저에 설정된 OpenAI API를 사용합니다."],
       ["AI 분석 실행", "핵심 근거, 리스크, 확인 항목을 생성합니다."],
       ["결과 정리", "JSON 결과를 화면 카드로 변환합니다."]
     ]
@@ -173,7 +174,7 @@ const PROCESS_PRESETS = {
     title: "AI 리포트 생성",
     steps: [
       ["신호 압축", "전체 신호를 AI 입력에 맞게 압축합니다."],
-      ["실행 방식 선택", "로컬 Codex CLI 또는 브라우저 OpenAI API를 선택합니다."],
+      ["OpenAI API 준비", "서버 또는 브라우저에 설정된 OpenAI API를 사용합니다."],
       ["AI 리포트 작성", "공통 테마, 리스크, 확인 지표를 작성합니다."],
       ["문서화", "Markdown/HTML 다운로드가 가능하도록 정리합니다."]
     ]
@@ -403,7 +404,7 @@ function sentimentTone(data) {
   return { key: "neutral", label: "중립", className: "neutral" };
 }
 
-function codexTone(data) {
+function aiTone(data) {
   const direction = String(data?.direction || "").trim();
   if (/상승/.test(direction)) return { label: "상승 쪽", className: "good" };
   if (/하락/.test(direction)) return { label: "하락 쪽", className: "bad" };
@@ -446,20 +447,6 @@ function hasOpenAIKey() {
   return Boolean(state.openai?.apiKey?.trim());
 }
 
-function isLocalCodexHost() {
-  const host = location.hostname.toLowerCase();
-  return host === "localhost" ||
-    host === "127.0.0.1" ||
-    host === "finance.xsw.kr" ||
-    host.endsWith(".local") ||
-    /^192\.168\./.test(host) ||
-    /^10\./.test(host);
-}
-
-function isVercelHost() {
-  return !isLocalCodexHost();
-}
-
 function maskedKey(key) {
   const value = String(key || "");
   if (!value) return "";
@@ -476,9 +463,7 @@ function updateOpenAISettingsUI() {
   if (status) {
     status.textContent = hasOpenAIKey()
       ? `저장됨: ${maskedKey(state.openai.apiKey)} · ${state.openai.model || DEFAULT_OPENAI_MODEL}`
-      : isVercelHost()
-        ? "API 키 없음. Vercel 배포본은 접속자 본인 OpenAI API 키를 브라우저에 저장해야 AI 기능을 실행합니다."
-        : "API 키 없음. 로컬에서는 키가 없으면 Codex CLI를 사용합니다.";
+      : "브라우저 키 없음. 운영 서버에 OpenAI API 키가 있으면 그대로 실행됩니다.";
   }
 }
 
@@ -1469,6 +1454,7 @@ function setOutput(selector, html) {
   if (!element) return;
   element.innerHTML = html;
   queueRevealScan();
+  window.requestAnimationFrame(() => runCounters(element));
 }
 
 function linkList(items) {
@@ -1644,6 +1630,21 @@ function renderMarketPredictionResult(found, data, linkedSignal) {
   `;
 }
 
+function dispatchPredictionReady(found, data, linkedSignal) {
+  const detail = {
+    generated_at: new Date().toISOString(),
+    ticker: data?.ticker || "",
+    name: data?.name || "",
+    prediction: data || null,
+    search_results: (found?.results || []).slice(0, 8),
+    selected_signal: linkedSignal || state.selectedSignal || null,
+    selected_article: state.selectedArticle || null,
+    article_candidates: (state.articleSelections || []).slice(0, 8),
+    sentiment_text: document.querySelector("#sentimentText")?.value || ""
+  };
+  window.dispatchEvent(new CustomEvent("finance:prediction-ready", { detail }));
+}
+
 function openAIResponseText(data) {
   if (typeof data?.output_text === "string") return data.output_text;
   const chunks = [];
@@ -1666,10 +1667,11 @@ function parseJsonObject(text) {
   }
 }
 
-async function callOpenAIResponse({ system, prompt, maxOutputTokens = 1200 }) {
-  if (!hasOpenAIKey()) throw new Error("OpenAI API 키를 먼저 저장하세요.");
+async function callOpenAIResponse({ system, prompt, maxOutputTokens = 1200, cacheKey = "", cacheTtlMs = 0 }) {
   const data = await apiPost("/api/openai/responses", {
-    apiKey: state.openai.apiKey,
+    apiKey: state.openai.apiKey || undefined,
+    cacheKey,
+    cacheTtlMs,
     payload: {
       model: state.openai.model || DEFAULT_OPENAI_MODEL,
       input: [
@@ -1684,6 +1686,10 @@ async function callOpenAIResponse({ system, prompt, maxOutputTokens = 1200 }) {
   return { text, raw: data };
 }
 
+function selectedAiTicker() {
+  return String(state.selectedTicker || firstTicker(state.selectedSignal) || "").trim().toUpperCase();
+}
+
 function selectedAiContext(text) {
   return JSON.stringify({
     input_text: text,
@@ -1695,7 +1701,8 @@ function selectedAiContext(text) {
 }
 
 async function analyzeWithOpenAIClient(text) {
-  const { text: output } = await callOpenAIResponse({
+  const ticker = selectedAiTicker();
+  const { text: output, raw } = await callOpenAIResponse({
     system: "너는 한국 금융시장 뉴스와 가격 신호를 분석하는 애널리스트다. 투자 조언이 아니라 분석 보조 정보만 제공한다. 반드시 JSON 객체 하나만 출력한다.",
     prompt: `아래 자료를 바탕으로 선택 종목에 대한 방향성을 한국어로 분석해라.
 
@@ -1713,12 +1720,16 @@ JSON 필드:
 
 자료:
 ${selectedAiContext(text)}`,
-    maxOutputTokens: 1400
+    maxOutputTokens: 1400,
+    cacheKey: ticker ? `stock-ai:${ticker}` : "",
+    cacheTtlMs: ticker ? OPENAI_STOCK_CACHE_TTL_MS : 0
   });
   return {
     ok: true,
     provider: "openai-api",
     model: state.openai.model || DEFAULT_OPENAI_MODEL,
+    cached: Boolean(raw?._cache?.hit),
+    cache_expires_at: raw?._cache?.expires_at || null,
     ...parseJsonObject(output)
   };
 }
@@ -1774,12 +1785,14 @@ ${JSON.stringify(compactSignalsForAi(state.signals), null, 2)}`,
   };
 }
 
-function renderCodexAnalysis(data) {
-  const tone = codexTone(data);
+function renderAiAnalysis(data) {
+  const tone = aiTone(data);
   const list = (items) => (items || []).map((item) => `<li>${escapeHtml(item)}</li>`).join("");
+  const providerLabel = data.provider === "openai-api" ? `OpenAI API · ${data.model || ""}` : data.provider || "OpenAI API";
+  const cacheLabel = data.cached ? "저장된 분석 불러옴 · " : "";
   return `
-    <div class="codex-result">
-      <div class="codex-result-head">
+    <div class="ai-result">
+      <div class="ai-result-head">
         <strong class="inline-mood ${tone.className}">AI 분석: ${escapeHtml(tone.label)}</strong>
         <span>${escapeHtml(String(Math.round(Number(data.confidence || 0))))}%</span>
       </div>
@@ -1788,7 +1801,7 @@ function renderCodexAnalysis(data) {
       ${data.risks?.length ? `<h4>리스크</h4><ul>${list(data.risks)}</ul>` : ""}
       ${data.watch_items?.length ? `<h4>확인할 것</h4><ul>${list(data.watch_items)}</ul>` : ""}
       <small>${escapeHtml(data.disclaimer || "본 결과는 분석 보조이며 투자 조언이 아닙니다.")}</small>
-      <small>${escapeHtml(data.provider === "openai-api" ? `OpenAI API · ${data.model || ""}` : data.provider || "Codex CLI")}</small>
+      <small>${escapeHtml(`${cacheLabel}${providerLabel}`)}</small>
       ${data.ok ? "" : `<div class="tool-notice">${escapeHtml("AI 응답 실패로 대체 해석을 표시했습니다.")}</div>`}
     </div>
   `;
@@ -2227,7 +2240,7 @@ async function runTool(tool) {
       setOutput("#sentimentOutput", `<strong class="inline-mood ${tone.className}">뉴스 해석: ${escapeHtml(tone.label)}</strong><br>${escapeHtml(data.reason || "입력 문장을 기준으로 방향성을 해석했습니다.")}${matched ? `<br>${matched}` : ""}`);
       completeProcess("뉴스 해석 완료");
     }
-    if (tool === "codex") {
+    if (tool === "ai") {
       activateProcessStep(0, 35, "기사, 선택 신호, 차트 맥락을 모으는 중입니다.");
       const text = document.querySelector("#sentimentText").value || articleInputText(state.selectedArticle) || state.selectedSignal?.summary || "";
       if (!text.trim() && !state.selectedSignal) {
@@ -2236,32 +2249,14 @@ async function runTool(tool) {
         return;
       }
       completeProcessStep(0, "AI 분석 입력 준비 완료");
-      let data;
-      if (hasOpenAIKey()) {
-        activateProcessStep(1, 60, "브라우저에 저장된 OpenAI API 키로 실행합니다.");
-        setOutput("#sentimentOutput", `${escapeHtml(state.openai.model || DEFAULT_OPENAI_MODEL)}로 기사 맥락과 선택 종목 신호를 분석하는 중입니다. API 키는 이 브라우저에만 저장되고 실행 시에만 OpenAI API 프록시에 전달됩니다.`);
-        completeProcessStep(1, "OpenAI API 실행 방식 선택");
-        activateProcessStep(2, 45, "OpenAI API 분석을 실행하는 중입니다.");
-        data = await analyzeWithOpenAIClient(text);
-      } else {
-        if (isVercelHost()) {
-          failProcess(new Error("Vercel 배포본은 OpenAI API 키 저장이 필요합니다."));
-          setOutput("#sentimentOutput", "Vercel 배포본에서는 접속자 본인의 OpenAI API 키를 먼저 저장해야 AI 분석을 실행할 수 있습니다. 위치: 고급 분석 > AI API 설정 > OpenAI API 키 입력 > 저장. 키는 서버에 저장하지 않습니다.");
-          return;
-        }
-        activateProcessStep(1, 60, "로컬 Codex CLI 실행 방식으로 분석합니다.");
-        setOutput("#sentimentOutput", "로컬 Codex CLI로 기사 맥락과 선택 종목 신호를 분석하는 중입니다. 보통 20~90초 정도 걸립니다.");
-        completeProcessStep(1, "Codex CLI 실행 방식 선택");
-        activateProcessStep(2, 45, "Codex CLI 분석을 실행하는 중입니다.");
-        data = await apiPost("/api/codex/analyze", {
-          text,
-          article: state.selectedArticle || {},
-          signal: state.selectedSignal || {}
-        });
-      }
+      activateProcessStep(1, 60, "OpenAI API 실행을 준비합니다.");
+      setOutput("#sentimentOutput", `${escapeHtml(state.openai.model || DEFAULT_OPENAI_MODEL)}로 기사 맥락과 선택 종목 신호를 분석하는 중입니다. 서버 OpenAI API 키가 있으면 서버 키를 쓰고, 없으면 브라우저에 저장된 키를 사용합니다.`);
+      completeProcessStep(1, "OpenAI API 실행 준비 완료");
+      activateProcessStep(2, 45, "OpenAI API 분석을 실행하는 중입니다.");
+      const data = await analyzeWithOpenAIClient(text);
       completeProcessStep(2, "AI 분석 결과 수신 완료");
       activateProcessStep(3, 85, "AI 분석 결과를 화면 카드로 정리하는 중입니다.");
-      setOutput("#sentimentOutput", renderCodexAnalysis(data));
+      setOutput("#sentimentOutput", renderAiAnalysis(data));
       completeProcess("AI 분석 완료");
     }
     if (tool === "predict") {
@@ -2289,6 +2284,7 @@ async function runTool(tool) {
       activateProcessStep(3, 75, "예측 결과를 신호와 차트에 연결하는 중입니다.");
       const linkedSignal = applyPredictionToSignal(data);
       setOutput("#predictOutput", renderMarketPredictionResult(found, data, linkedSignal));
+      dispatchPredictionReady(found, data, linkedSignal);
       completeProcess("시장 예측 반영 완료");
     }
     if (tool === "track") {
@@ -2352,25 +2348,11 @@ async function runTool(tool) {
     if (tool === "report-ai") {
       activateProcessStep(0, 35, `${state.signals.length}개 신호를 AI 입력에 맞게 압축하는 중입니다.`);
       completeProcessStep(0, "신호 압축 완료");
-      let data;
-      if (hasOpenAIKey()) {
-        activateProcessStep(1, 60, "브라우저에 저장된 OpenAI API 키로 실행합니다.");
-        setOutput("#reportOutput", `${escapeHtml(state.openai.model || DEFAULT_OPENAI_MODEL)}로 전체 신호를 읽고 AI 리포트를 작성하는 중입니다. API 키는 이 브라우저에만 저장되고 실행 시에만 OpenAI API 프록시에 전달됩니다.`);
-        completeProcessStep(1, "OpenAI API 실행 방식 선택");
-        activateProcessStep(2, 45, "AI 리포트를 작성하는 중입니다.");
-        data = await generateOpenAIReport();
-      } else {
-        if (isVercelHost()) {
-          failProcess(new Error("Vercel 배포본은 OpenAI API 키 저장이 필요합니다."));
-          setOutput("#reportOutput", "Vercel 배포본에서는 접속자 본인의 OpenAI API 키를 먼저 저장해야 AI 리포트를 생성할 수 있습니다. 위치: 고급 분석 > AI API 설정 > OpenAI API 키 입력 > 저장. 키는 서버에 저장하지 않습니다.");
-          return;
-        }
-        activateProcessStep(1, 60, "로컬 Codex CLI 실행 방식으로 작성합니다.");
-        setOutput("#reportOutput", "로컬 Codex CLI로 전체 신호를 읽고 AI 리포트를 작성하는 중입니다. 보통 20~90초 정도 걸립니다.");
-        completeProcessStep(1, "Codex CLI 실행 방식 선택");
-        activateProcessStep(2, 45, "Codex CLI로 AI 리포트를 작성하는 중입니다.");
-        data = await apiPost("/api/codex/report", { signals: state.signals, title: "Finance Signal Radar AI 리포트" });
-      }
+      activateProcessStep(1, 60, "OpenAI API 실행을 준비합니다.");
+      setOutput("#reportOutput", `${escapeHtml(state.openai.model || DEFAULT_OPENAI_MODEL)}로 전체 신호를 읽고 AI 리포트를 작성하는 중입니다. 서버 OpenAI API 키가 있으면 서버 키를 쓰고, 없으면 브라우저에 저장된 키를 사용합니다.`);
+      completeProcessStep(1, "OpenAI API 실행 준비 완료");
+      activateProcessStep(2, 45, "AI 리포트를 작성하는 중입니다.");
+      const data = await generateOpenAIReport();
       completeProcessStep(2, "AI 리포트 작성 완료");
       state.lastReport = data;
       activateProcessStep(3, 85, "Markdown/HTML 문서로 정리하는 중입니다.");
@@ -2389,7 +2371,7 @@ async function runTool(tool) {
       search: "#searchOutput",
       stock: "#stockOutput",
       sentiment: "#sentimentOutput",
-      codex: "#sentimentOutput",
+      ai: "#sentimentOutput",
       predict: "#predictOutput",
       track: "#trackOutput",
       visualize: "#visualOutput",

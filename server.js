@@ -1,6 +1,6 @@
 import http from "node:http";
-import { spawn } from "node:child_process";
-import { readFile, writeFile, mkdir, mkdtemp, rm } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -12,9 +12,13 @@ const PORT = Number(process.env.PORT || 3245);
 const CNY_TO_KRW = 218.59;
 const DATA_DIR = process.env.VERCEL ? path.join(os.tmpdir(), "finance-dashboard-data") : path.join(__dirname, "data");
 const SIGNAL_STORE = path.join(DATA_DIR, "signals.json");
-const CODEX_COMMAND = process.env.CODEX_COMMAND || "codex";
-const CODEX_MODEL = process.env.CODEX_MODEL || "gpt-5.4-mini";
-const CODEX_TIMEOUT_MS = Number(process.env.CODEX_TIMEOUT_MS || 90000);
+const OPENAI_RESPONSE_CACHE = path.join(DATA_DIR, "openai-response-cache.json");
+const TA_API_BASE = process.env.TA_API_BASE || "http://127.0.0.1:3315";
+const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-5-mini";
+const OPENAI_REASONING_EFFORT = process.env.OPENAI_REASONING_EFFORT || "minimal";
+const OPENAI_TIMEOUT_MS = Number(process.env.OPENAI_TIMEOUT_MS || 90000);
+const OPENAI_CACHE_TTL_MS = Number(process.env.OPENAI_CACHE_TTL_MS || 4 * 60 * 60 * 1000);
+const OPENAI_CACHE_MAX_ENTRIES = Number(process.env.OPENAI_CACHE_MAX_ENTRIES || 200);
 const KRX_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 const KRX_LISTING_BASE = "https://raw.githubusercontent.com/FinanceData/fdr_krx_data_cache/refs/heads/master/data/listing/krx";
 const KRX_HEADERS = {
@@ -95,6 +99,11 @@ await mkdir(DATA_DIR, { recursive: true });
 export async function handleRequest(req, res) {
   try {
     const url = new URL(req.url, `http://${req.headers.host}`);
+    // /ta-api/* → ta Python 서버로 프록시
+    if (url.pathname.startsWith("/ta-api/")) {
+      await proxyToTa(req, res, url);
+      return;
+    }
     if (url.pathname.startsWith("/api/")) {
       await routeApi(req, res, url);
       return;
@@ -102,6 +111,78 @@ export async function handleRequest(req, res) {
     await serveStatic(res, url.pathname);
   } catch (error) {
     sendJson(res, 500, { error: "서버 오류", detail: error.message });
+  }
+}
+
+// 종목명/코드를 yfinance 호환 티커로 변환 (한글·영문 종목명, 숫자코드 모두 처리)
+function resolveTickerForTa(raw) {
+  if (!raw) return raw;
+  const trimmed = raw.trim();
+  // 이미 yfinance 형식 (예: 005930.KS, NVDA)
+  if (/\.(KS|KQ|T|HK|SS|SZ)$/i.test(trimmed)) return trimmed.toUpperCase();
+  // STOCK_ALIASES에서 매칭 시도
+  const found = findStockByQuery(trimmed);
+  if (found?.ticker) return found.ticker;
+  // 6자리 숫자 → KRX 코드로 .KS 붙여주기
+  if (/^\d{6}$/.test(trimmed)) return `${trimmed}.KS`;
+  // 그 외 영문은 그대로 대문자로
+  return trimmed.toUpperCase();
+}
+
+async function proxyToTa(req, res, url) {
+  // POST body의 ticker도 정규화
+  let targetSearch = url.search || "";
+  let bodyOverride = null;
+
+  if (req.method === "POST") {
+    const chunks = [];
+    await new Promise((resolve, reject) => {
+      req.on("data", (c) => chunks.push(c));
+      req.on("end", resolve);
+      req.on("error", reject);
+    });
+    if (chunks.length) {
+      try {
+        const parsed = JSON.parse(Buffer.concat(chunks).toString());
+        if (parsed.ticker) parsed.ticker = resolveTickerForTa(parsed.ticker);
+        // detail 값 ta 허용값으로 정규화 (balanced→standard, fast→brief)
+        const detailMap = { balanced: "standard", fast: "brief", deep: "deep", standard: "standard", brief: "brief" };
+        if (parsed.detail) parsed.detail = detailMap[parsed.detail] || "standard";
+        bodyOverride = Buffer.from(JSON.stringify(parsed));
+      } catch {
+        bodyOverride = Buffer.concat(chunks);
+      }
+    }
+  } else if (url.searchParams.has("ticker")) {
+    // GET 쿼리스트링의 ticker 정규화
+    const params = new URLSearchParams(url.search);
+    params.set("ticker", resolveTickerForTa(params.get("ticker")));
+    targetSearch = "?" + params.toString();
+  }
+
+  const targetPath = url.pathname.replace(/^\/ta-api/, "") + targetSearch;
+  const targetUrl = `${TA_API_BASE}${targetPath}`;
+  try {
+    // GET은 body 없음, POST는 이미 위에서 읽어 bodyOverride에 저장됨
+    const body = bodyOverride !== null ? bodyOverride : undefined;
+    const proxyModule = targetUrl.startsWith("https") ? await import("node:https") : await import("node:http");
+    const proxyReq = proxyModule.default.request(targetUrl, {
+      method: req.method,
+      headers: {
+        "content-type": "application/json",
+        ...(body ? { "content-length": String(body.length) } : {}),
+      },
+    }, (proxyRes) => {
+      res.writeHead(proxyRes.statusCode, { "content-type": proxyRes.headers["content-type"] || "application/json" });
+      proxyRes.pipe(res);
+    });
+    proxyReq.on("error", (err) => {
+      sendJson(res, 502, { error: "ta 서버 연결 실패", detail: err.message });
+    });
+    if (body && body.length) proxyReq.write(body);
+    proxyReq.end();
+  } catch (err) {
+    sendJson(res, 502, { error: "ta 프록시 오류", detail: err.message });
   }
 }
 
@@ -181,11 +262,6 @@ async function routeApi(req, res, url) {
     sendJson(res, 200, analyzeSentiment(body.text || ""));
     return;
   }
-  if (req.method === "POST" && url.pathname === "/api/codex/analyze") {
-    const body = await readBody(req);
-    sendJson(res, 200, await analyzeWithCodex(body));
-    return;
-  }
   if (req.method === "GET" && url.pathname === "/api/predict") {
     const ticker = url.searchParams.get("ticker") || "005930.KS";
     const days = Number(url.searchParams.get("days") || 5);
@@ -205,11 +281,6 @@ async function routeApi(req, res, url) {
   if (req.method === "POST" && url.pathname === "/api/report/generate") {
     const body = await readBody(req);
     sendJson(res, 200, generateReport(body.signals || [], body.title || "금융 신호 리포트"));
-    return;
-  }
-  if (req.method === "POST" && url.pathname === "/api/codex/report") {
-    const body = await readBody(req);
-    sendJson(res, 200, await generateCodexReport(body.signals || [], body.title || "Finance Signal Radar AI 리포트"));
     return;
   }
   if (req.method === "POST" && url.pathname === "/api/openai/responses") {
@@ -364,14 +435,25 @@ async function buildSignalFromRealData(stock, newsItems, charts) {
     },
     industry_tags: stockTags(stock),
     impact_tickers: [{ ticker: stock.ticker, code: stock.code, name: stock.name, weight: 1 }],
+    source_articles: newsItems.slice(0, 8).map(compactNewsSource),
     transmission_chain: [
       { node_name: "한국어 기사", impact_type: impactType, logic: mainSource?.title || "실제 기사 없음" },
       { node_name: "기사 감성", impact_type: articleSentiment.label_ko, logic: articleSentiment.reason },
       { node_name: "가격·예측", impact_type: directionLabel === "상승" ? "중립·강세" : directionLabel === "하락" ? "중립·약세" : "중립", logic: `1개월 ${priceChange.toFixed(2)}%, 예측 ${forecastChange.toFixed(2)}%` },
       { node_name: "영향 종목", impact_type: impactType, logic: `${stock.name} (${stock.ticker})` }
     ],
-    sources: newsItems.slice(0, 3).map((item) => ({ source_name: item.source_name, title: item.title, url: item.url, published_at: item.published_at })),
+    sources: newsItems.slice(0, 8).map(compactNewsSource),
     search_results: makeKoreanSearch(`${stock.name} ${stockNewsKeyword(stock)} 뉴스`).engines
+  };
+}
+
+function compactNewsSource(item) {
+  return {
+    source_name: item.source_name || item.source || "",
+    title: item.title || "",
+    snippet: item.description || item.snippet || "",
+    url: item.url || "",
+    published_at: item.published_at || item.pubDate || null
   };
 }
 
@@ -1607,218 +1689,6 @@ function analyzeSentiment(text) {
   };
 }
 
-async function analyzeWithCodex(body) {
-  if (process.env.VERCEL) {
-    return {
-      ok: false,
-      provider: "browser-openai-required",
-      summary: "Vercel 배포본에서는 서버에서 Codex CLI를 실행하지 않습니다. 브라우저의 AI API 설정에 접속자 본인의 OpenAI API 키를 저장한 뒤 AI 분석을 실행하세요.",
-      direction: "중립",
-      confidence: 0,
-      key_points: [],
-      risks: ["Vercel 서버리스 환경에는 로컬 Codex CLI 실행 환경이 없습니다."],
-      watch_items: ["고급 분석 > AI API 설정에서 OpenAI API 키와 모델을 저장하세요."],
-      disclaimer: "키는 서버에 저장하지 않고 실행 요청 시에만 OpenAI API 프록시에 전달됩니다."
-    };
-  }
-  const text = trimForPrompt(body.text || "", 4200);
-  const signal = compactSignalForPrompt(body.signal || {});
-  const selectedArticle = compactArticleForPrompt(body.article || {});
-  if (!text && !signal.title && !selectedArticle.title) {
-    return {
-      ok: false,
-      summary: "Codex AI 분석에 사용할 기사나 선택 종목 정보가 없습니다.",
-      direction: "중립",
-      confidence: 0,
-      key_points: [],
-      risks: ["뉴스 해석 입력창에 기사 본문 요약을 넣거나 종목을 먼저 선택하세요."],
-      watch_items: [],
-      disclaimer: "본 결과는 공개 데이터 기반 분석 보조이며 투자 조언이 아닙니다."
-    };
-  }
-
-  const startedAt = Date.now();
-  try {
-    const raw = await runCodexExec(buildCodexMarketPrompt({ text, signal, selectedArticle }));
-    const parsed = parseCodexAnalysis(raw);
-    return {
-      ok: true,
-      provider: "codex-cli",
-      model: CODEX_MODEL,
-      duration_ms: Date.now() - startedAt,
-      ...parsed,
-      disclaimer: parsed.disclaimer || "본 결과는 공개 데이터 기반 분석 보조이며 투자 조언이 아닙니다."
-    };
-  } catch (error) {
-    const local = analyzeSentiment([text, signal.summary, signal.reasoning].filter(Boolean).join("\n"));
-    return {
-      ok: false,
-      provider: "codex-cli",
-      model: CODEX_MODEL,
-      duration_ms: Date.now() - startedAt,
-      summary: "Codex CLI 분석을 완료하지 못해 키워드 기반 1차 해석만 표시합니다.",
-      direction: local.label_ko,
-      confidence: Math.min(70, Math.max(30, Math.round(Math.abs(local.score) * 100))),
-      key_points: [local.reason],
-      risks: [`Codex CLI 오류: ${error.message}`],
-      watch_items: ["Codex CLI 로그인 상태와 서버 환경변수 CODEX_COMMAND, CODEX_MODEL, CODEX_TIMEOUT_MS를 확인하세요."],
-      disclaimer: "본 결과는 공개 데이터 기반 분석 보조이며 투자 조언이 아닙니다."
-    };
-  }
-}
-
-function buildCodexMarketPrompt({ text, signal, selectedArticle }) {
-  return [
-    "너는 금융 뉴스와 주가 예측을 해석하는 한국어 분석 보조 엔진이다.",
-    "투자 조언, 매수/매도 지시, 확정적 수익 표현은 금지한다.",
-    "입력된 기사 본문, 선택 신호, 단기 예측 데이터를 근거로만 판단한다.",
-    "반드시 JSON 객체 하나만 출력한다. 마크다운 코드블록을 쓰지 않는다.",
-    "JSON 스키마:",
-    "{",
-    "  \"summary\": \"2문장 이내 핵심 해석\",",
-    "  \"direction\": \"상승|하락|중립\",",
-    "  \"confidence\": 0-100,",
-    "  \"key_points\": [\"근거 1\", \"근거 2\", \"근거 3\"],",
-    "  \"risks\": [\"반대 시나리오 또는 불확실성\"],",
-    "  \"watch_items\": [\"확인할 지표나 이벤트\"],",
-    "  \"disclaimer\": \"투자 조언이 아니라는 한 문장\"",
-    "}",
-    "",
-    "[선택 기사]",
-    JSON.stringify(selectedArticle, null, 2),
-    "",
-    "[뉴스 해석 입력]",
-    text || "-",
-    "",
-    "[선택 신호]",
-    JSON.stringify(signal, null, 2)
-  ].join("\n");
-}
-
-async function runCodexExec(prompt) {
-  const tmpRoot = await mkdtemp(path.join(os.tmpdir(), "finance-codex-"));
-  const outputFile = path.join(tmpRoot, "last-message.txt");
-  const args = [
-    "exec",
-    "--ephemeral",
-    "--sandbox",
-    "read-only",
-    "-c",
-    "approval_policy=\"never\"",
-    "-m",
-    CODEX_MODEL,
-    "-C",
-    __dirname,
-    "-o",
-    outputFile,
-    "-"
-  ];
-
-  try {
-    const { stderr } = await runProcess(CODEX_COMMAND, args, prompt, CODEX_TIMEOUT_MS);
-    const message = existsSync(outputFile) ? await readFile(outputFile, "utf8") : "";
-    if (!message.trim()) throw new Error(stderr.trim() || "Codex CLI가 빈 응답을 반환했습니다.");
-    return message;
-  } finally {
-    await rm(tmpRoot, { recursive: true, force: true });
-  }
-}
-
-function runProcess(command, args, input, timeoutMs) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(command, args, {
-      cwd: __dirname,
-      env: { ...process.env, NO_COLOR: "1" },
-      stdio: ["pipe", "pipe", "pipe"]
-    });
-    let stdout = "";
-    let stderr = "";
-    let settled = false;
-    const timer = setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      child.kill("SIGTERM");
-      reject(new Error(`Codex CLI 분석 시간이 ${Math.round(timeoutMs / 1000)}초를 초과했습니다.`));
-    }, timeoutMs);
-
-    child.stdout.on("data", (chunk) => { stdout += chunk.toString("utf8"); });
-    child.stderr.on("data", (chunk) => { stderr += chunk.toString("utf8"); });
-    child.on("error", (error) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      reject(error);
-    });
-    child.on("close", (code) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      if (code === 0) resolve({ stdout, stderr });
-      else reject(new Error((stderr || stdout || `Codex CLI exited with ${code}`).trim()));
-    });
-
-    child.stdin.end(input);
-  });
-}
-
-function parseCodexAnalysis(raw) {
-  const text = String(raw || "").trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "");
-  const jsonText = text.startsWith("{") ? text : text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1);
-  const parsed = JSON.parse(jsonText);
-  return {
-    summary: String(parsed.summary || "").trim(),
-    direction: normalizeDirection(parsed.direction),
-    confidence: clamp(Number(parsed.confidence || 0), 0, 100),
-    key_points: normalizeStringList(parsed.key_points).slice(0, 5),
-    risks: normalizeStringList(parsed.risks).slice(0, 5),
-    watch_items: normalizeStringList(parsed.watch_items).slice(0, 5),
-    disclaimer: String(parsed.disclaimer || "").trim()
-  };
-}
-
-function normalizeDirection(value) {
-  const text = String(value || "").trim();
-  if (/상승|positive|bull/i.test(text)) return "상승";
-  if (/하락|negative|bear/i.test(text)) return "하락";
-  return "중립";
-}
-
-function normalizeStringList(value) {
-  if (Array.isArray(value)) return value.map((item) => String(item || "").trim()).filter(Boolean);
-  const text = String(value || "").trim();
-  return text ? [text] : [];
-}
-
-function compactSignalForPrompt(signal) {
-  return {
-    title: signal.title || "",
-    summary: signal.summary || "",
-    reasoning: signal.reasoning || "",
-    sentiment_score: signal.sentiment_score ?? null,
-    confidence: signal.confidence ?? null,
-    expected_horizon: signal.expected_horizon || "",
-    prediction_summary: signal.prediction_summary || null,
-    impact_tickers: (signal.impact_tickers || []).slice(0, 5),
-    transmission_chain: (signal.transmission_chain || []).slice(0, 6),
-    sources: (signal.sources || []).slice(0, 3)
-  };
-}
-
-function compactArticleForPrompt(article) {
-  return {
-    title: article.title || "",
-    summary: article.extracted_summary || article.summary || article.snippet || "",
-    url: article.final_url || article.url || "",
-    source_name: article.source_name || "",
-    published_at: article.published_at || ""
-  };
-}
-
-function trimForPrompt(value, max) {
-  const text = String(value || "").trim();
-  return text.length > max ? `${text.slice(0, max)}\n[이후 생략]` : text;
-}
-
 function keywordMatches(haystack, words) {
   return words.map((word) => {
     const escaped = String(word).toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -1998,88 +1868,18 @@ function generateReport(signals, title) {
   return { title, markdown, html: markdownToHtml(markdown) };
 }
 
-async function generateCodexReport(signals, title) {
-  if (process.env.VERCEL) {
-    const markdown = `# ${title}\n\nVercel 배포본에서는 서버에서 Codex CLI를 실행하지 않습니다.\n\n고급 분석의 AI API 설정에 접속자 본인의 OpenAI API 키를 저장한 뒤 AI 리포트를 실행하세요.\n\n## 주의\n키는 서버에 저장하지 않고 실행 요청 시에만 OpenAI API 프록시에 전달됩니다.\n`;
-    return {
-      ok: false,
-      provider: "browser-openai-required",
-      title,
-      markdown,
-      html: markdownToHtml(markdown)
-    };
-  }
-  const startedAt = Date.now();
-  const compactSignals = (signals || []).slice(0, 12).map(compactSignalForPrompt);
-  if (!compactSignals.length) {
-    const empty = `# ${title}\n\n생성시각: ${new Date().toLocaleString("ko-KR")}\n\n분석할 신호가 없습니다.\n\n## 주의\n본 리포트는 공개 데이터 기반 분석 보조이며 투자 조언이 아닙니다.\n`;
-    return { ok: false, title, markdown: empty, html: markdownToHtml(empty), provider: "codex-cli", model: CODEX_MODEL };
-  }
-
-  try {
-    const raw = await runCodexExec(buildCodexReportPrompt(title, compactSignals));
-    const markdown = normalizeCodexMarkdown(raw, title);
-    return {
-      ok: true,
-      provider: "codex-cli",
-      model: CODEX_MODEL,
-      duration_ms: Date.now() - startedAt,
-      title,
-      markdown,
-      html: markdownToHtml(markdown)
-    };
-  } catch (error) {
-    const fallback = generateReport(signals, title);
-    const markdown = `${fallback.markdown}\n## AI 리포트 생성 실패\nCodex CLI 오류: ${error.message}\n`;
-    return {
-      ok: false,
-      provider: "codex-cli",
-      model: CODEX_MODEL,
-      duration_ms: Date.now() - startedAt,
-      title,
-      markdown,
-      html: markdownToHtml(markdown)
-    };
-  }
-}
-
-function buildCodexReportPrompt(title, signals) {
-  return [
-    "너는 한국어 금융 신호 대시보드의 리포트 작성 엔진이다.",
-    "투자 조언, 매수/매도 지시, 확정적 수익 표현은 금지한다.",
-    "아래 신호 데이터만 근거로 공통 테마, 상충 신호, 리스크, 다음 확인 지표를 정리한다.",
-    "마크다운 문서만 출력한다. 코드블록은 쓰지 않는다.",
-    "문서 구조:",
-    `# ${title}`,
-    "## 한 줄 결론",
-    "## 시장 테마 요약",
-    "## 강한 신호",
-    "## 상충 신호와 리스크",
-    "## 다음에 확인할 지표",
-    "## 주의",
-    "",
-    "[신호 데이터]",
-    JSON.stringify(signals, null, 2)
-  ].join("\n");
-}
-
-function normalizeCodexMarkdown(raw, title) {
-  const body = String(raw || "")
-    .trim()
-    .replace(/^```(?:markdown|md)?\s*/i, "")
-    .replace(/\s*```$/i, "")
-    .trim();
-  const header = body.startsWith("# ") ? body : `# ${title}\n\n${body}`;
-  const notice = /투자 조언|투자조언/.test(header)
-    ? ""
-    : "\n\n## 주의\n본 리포트는 공개 데이터 기반 분석 보조이며 투자 조언이 아닙니다.";
-  return `${header}${notice}\n`;
-}
-
 async function proxyOpenAIResponse(body) {
-  const apiKey = String(body.apiKey || "").trim();
-  if (!apiKey) throw new Error("OpenAI API 키가 없습니다.");
-  const payload = body.payload || {};
+  const serverApiKey = String(process.env.OPENAI_API_KEY || "").trim();
+  const providedApiKey = String(body.apiKey || "").trim();
+  const apiKey = serverApiKey || providedApiKey;
+  if (!apiKey) throw new Error("OpenAI API 키가 서버 또는 브라우저에 없습니다.");
+  const payload = normalizeOpenAIResponsePayload(body.payload || {});
+  const cacheKey = normalizeOpenAICacheKey(body.cacheKey, payload);
+  const cacheTtlMs = normalizeOpenAICacheTtl(body.cacheTtlMs);
+  if (cacheKey && cacheTtlMs > 0 && !body.noCache) {
+    const cached = await readOpenAIResponseCache(cacheKey);
+    if (cached) return withOpenAICacheMeta(cached.data, true, cached.entry);
+  }
   const response = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
     headers: {
@@ -2087,7 +1887,7 @@ async function proxyOpenAIResponse(body) {
       "authorization": `Bearer ${apiKey}`
     },
     body: JSON.stringify(payload),
-    signal: AbortSignal.timeout(90000)
+    signal: AbortSignal.timeout(OPENAI_TIMEOUT_MS)
   });
   const text = await response.text();
   let data;
@@ -2099,7 +1899,101 @@ async function proxyOpenAIResponse(body) {
   if (!response.ok) {
     throw new Error(data?.error?.message || `OpenAI API ${response.status}`);
   }
+  if (cacheKey && cacheTtlMs > 0 && !body.noCache) {
+    const entry = await writeOpenAIResponseCache(cacheKey, data, cacheTtlMs);
+    return withOpenAICacheMeta(data, false, entry);
+  }
   return data;
+}
+
+function normalizeOpenAIResponsePayload(payload) {
+  const normalized = { ...payload };
+  normalized.model = String(normalized.model || OPENAI_MODEL).trim() || OPENAI_MODEL;
+  if (!normalized.reasoning && /^gpt-5(?:[.-]|$)/i.test(normalized.model)) {
+    normalized.reasoning = { effort: OPENAI_REASONING_EFFORT };
+  }
+  if (normalized.max_output_tokens !== undefined) {
+    normalized.max_output_tokens = clamp(Number(normalized.max_output_tokens) || 0, 1, 4000);
+  }
+  return normalized;
+}
+
+function normalizeOpenAICacheKey(cacheKey, payload) {
+  const key = String(cacheKey || "").trim().toLowerCase();
+  if (!key) return "";
+  return `${String(payload.model || OPENAI_MODEL).toLowerCase()}:${key}`;
+}
+
+function normalizeOpenAICacheTtl(value) {
+  const raw = value === undefined ? OPENAI_CACHE_TTL_MS : Number(value);
+  if (!Number.isFinite(raw) || raw <= 0) return 0;
+  return Math.min(Math.max(Math.round(raw), 60_000), 24 * 60 * 60 * 1000);
+}
+
+function openAICacheId(cacheKey) {
+  return createHash("sha256").update(cacheKey).digest("hex");
+}
+
+async function readOpenAIResponseCache(cacheKey) {
+  const store = await readOpenAIResponseCacheStore();
+  const id = openAICacheId(cacheKey);
+  const entry = store.entries?.[id];
+  if (!entry) return null;
+  if (Number(entry.expires_at || 0) <= Date.now()) {
+    delete store.entries[id];
+    await writeOpenAIResponseCacheStore(store);
+    return null;
+  }
+  return { entry, data: entry.data };
+}
+
+async function writeOpenAIResponseCache(cacheKey, data, ttlMs) {
+  const store = await readOpenAIResponseCacheStore();
+  const id = openAICacheId(cacheKey);
+  const now = Date.now();
+  const entry = {
+    key: cacheKey,
+    created_at: now,
+    expires_at: now + ttlMs,
+    data
+  };
+  store.entries[id] = entry;
+  pruneOpenAIResponseCache(store);
+  await writeOpenAIResponseCacheStore(store);
+  return entry;
+}
+
+async function readOpenAIResponseCacheStore() {
+  try {
+    const parsed = JSON.parse(await readFile(OPENAI_RESPONSE_CACHE, "utf8"));
+    return { version: 1, entries: parsed.entries && typeof parsed.entries === "object" ? parsed.entries : {} };
+  } catch {
+    return { version: 1, entries: {} };
+  }
+}
+
+async function writeOpenAIResponseCacheStore(store) {
+  await writeFile(OPENAI_RESPONSE_CACHE, JSON.stringify(store, null, 2));
+}
+
+function pruneOpenAIResponseCache(store) {
+  const now = Date.now();
+  const entries = Object.entries(store.entries || {})
+    .filter(([, entry]) => Number(entry.expires_at || 0) > now)
+    .sort((a, b) => Number(b[1].created_at || 0) - Number(a[1].created_at || 0))
+    .slice(0, OPENAI_CACHE_MAX_ENTRIES);
+  store.entries = Object.fromEntries(entries);
+}
+
+function withOpenAICacheMeta(data, hit, entry) {
+  return {
+    ...data,
+    _cache: {
+      hit,
+      created_at: new Date(Number(entry.created_at || Date.now())).toISOString(),
+      expires_at: new Date(Number(entry.expires_at || Date.now())).toISOString()
+    }
+  };
 }
 
 async function translate(text) {

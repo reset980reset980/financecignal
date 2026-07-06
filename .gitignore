@@ -8,6 +8,7 @@
 
 # Data / signals store
 data/signals.json
+data/openai-response-cache.json
 
 # Node
 node_modules/

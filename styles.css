@@ -1396,38 +1396,38 @@ meter {
   margin-top: 0;
 }
 
-.codex-result {
+.ai-result {
   display: grid;
   gap: 10px;
 }
 
-.codex-result-head {
+.ai-result-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
 }
 
-.codex-result-head span {
+.ai-result-head span {
   padding: 4px 8px;
   border-radius: 999px;
   background: #fff7df;
   font-weight: 900;
 }
 
-.codex-result h4 {
+.ai-result h4 {
   margin: 2px 0 -4px;
   font-size: 12px;
 }
 
-.codex-result ul {
+.ai-result ul {
   display: grid;
   gap: 4px;
   margin: 0;
   padding-left: 18px;
 }
 
-.codex-result small {
+.ai-result small {
   color: var(--muted);
   font-weight: 800;
 }
@@ -1646,3 +1646,191 @@ meter {
     width: 100%;
   }
 }
+
+/* ── 심층 분석 ─────────────────────── */
+.deep-analysis-panel {
+  margin-top: 2rem;
+  border-top: 2px solid var(--border, #334155);
+  padding-top: 1.5rem;
+}
+
+.ta-status {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.6rem 1rem;
+  background: #fffdf7;
+  border-radius: 0.5rem;
+  margin: 0.8rem 0;
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+.ta-snap-grid {
+  display: flex;
+  align-items: baseline;
+  gap: 1rem;
+  flex-wrap: wrap;
+  padding: 0.6rem 0;
+}
+.ta-snap-ticker { font-weight: 700; font-size: 1.1rem; }
+.ta-snap-price  { font-size: 1.2rem; font-weight: 600; }
+.ta-snap-chg    { font-weight: 600; }
+.ta-snap-meta   { font-size: 0.82rem; color: var(--muted, #94a3b8); }
+
+.ta-snapshot {
+  padding: 0.6rem 1rem;
+  background: #fffdf7;
+  border-radius: 0.5rem;
+  margin-bottom: 0.6rem;
+}
+
+.ta-decision {
+  padding: 0.6rem 1.2rem;
+  border-radius: 0.5rem;
+  font-size: 1.05rem;
+  margin-bottom: 1rem;
+  font-weight: 600;
+}
+.ta-buy  { background: rgba(74, 222, 128, 0.15); color: #4ade80; border-left: 4px solid #4ade80; }
+.ta-sell { background: rgba(248, 113, 113, 0.15); color: #f87171; border-left: 4px solid #f87171; }
+.ta-hold { background: rgba(250, 204,  21, 0.15); color: #facc15; border-left: 4px solid #facc15; }
+
+.ta-report h1, .ta-report h2, .ta-report h3 {
+  margin: 1rem 0 0.4rem;
+}
+.ta-report ul { padding-left: 1.4rem; }
+.ta-report p  { margin: 0.4rem 0; line-height: 1.6; }
+
+.ta-waiting { color: var(--muted); font-style: italic; }
+.ta-error   { color: #f87171; }
+
+.ta-job-item {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.5rem 0.8rem;
+  border-radius: 0.4rem;
+  font-size: 0.88rem;
+}
+.ta-job-item:hover { background: #fffdf7; }
+.ta-job-status { font-size: 0.7rem; }
+
+.analyst-row {
+  display: flex;
+  align-items: center;
+  gap: 1.2rem;
+  flex-wrap: wrap;
+  padding: 0.5rem 0;
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+.analyst-row label {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  cursor: pointer;
+}
+
+/* ── ta 심층 분석 인라인 통합 (v2) ───────────────────────── */
+.ta-deep-section {
+  margin-top: 1.2rem;
+  padding: 1rem 1.2rem;
+  color: var(--ink);
+  background: #fffdf7;
+  border: 1px solid rgba(15, 123, 95, 0.22);
+  border-left: 4px solid var(--green);
+  border-radius: 8px;
+  box-shadow: 0 14px 32px rgba(23, 33, 28, 0.1);
+}
+
+.ta-deep-header {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.8rem;
+  font-size: 0.9rem;
+  color: var(--ink);
+}
+
+.ta-deep-header strong {
+  color: var(--green);
+  font-weight: 900;
+}
+
+.ta-deep-ticker {
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgba(15, 123, 95, 0.1);
+  color: var(--green);
+  font-weight: 700;
+  font-size: 0.95rem;
+}
+
+.ta-deep-status {
+  color: var(--muted);
+  font-size: 0.85rem;
+  font-weight: 800;
+}
+
+.ta-deep-body {
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 1.65;
+}
+
+.ta-report {
+  display: grid;
+  gap: 10px;
+  color: var(--ink);
+}
+
+.ta-report h1,
+.ta-report h2,
+.ta-report h3 {
+  margin: 10px 0 2px;
+  color: #10251d;
+  font-family: "Noto Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+  font-weight: 900;
+  line-height: 1.35;
+  letter-spacing: 0;
+}
+
+.ta-report h1 { font-size: 20px; }
+.ta-report h2 { font-size: 18px; }
+.ta-report h3 { font-size: 15px; }
+
+.ta-report p {
+  margin: 0;
+  color: #26342d;
+}
+
+.ta-report ul {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding-left: 20px;
+  color: #26342d;
+}
+
+.ta-report li {
+  line-height: 1.55;
+}
+
+.ta-cache-note {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.ta-decision {
+  padding: 0.5rem 1rem;
+  border-radius: 0.4rem;
+  font-size: 1rem;
+  margin-bottom: 0.8rem;
+}
+.ta-buy  { background: rgba(74,222,128,.15); color:#4ade80; border-left:3px solid #4ade80; }
+.ta-sell { background: rgba(248,113,113,.15); color:#f87171; border-left:3px solid #f87171; }
+.ta-hold { background: rgba(250,204,21,.15);  color:#facc15; border-left:3px solid #facc15; }
